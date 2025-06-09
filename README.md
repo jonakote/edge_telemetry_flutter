@@ -1,6 +1,6 @@
 # EdgeTelemetry Flutter
 
-A comprehensive Real User Monitoring (RUM) and telemetry package for Flutter applications with OpenTelemetry integration.
+A comprehensive Real User Monitoring (RUM) and telemetry package for Flutter applications.
 
 ## Features
 
