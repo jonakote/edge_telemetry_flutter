@@ -34,6 +34,12 @@ class SpanManager {
     _userAttributes.clear();
   }
 
+  /// Get current user attributes (NEW: Public getter)
+  Map<String, String> get userAttributes => Map.unmodifiable(_userAttributes);
+
+  /// Get user ID if available (NEW: Convenience getter)
+  String? get userId => _userAttributes['user.id'];
+
   /// Create a new span with automatic attribute enrichment
   ///
   /// Combines global attributes, user attributes, and custom attributes

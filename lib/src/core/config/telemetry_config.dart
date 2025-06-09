@@ -2,7 +2,7 @@
 
 /// Configuration class for EdgeTelemetry initialization
 ///
-/// Contains all settings needed to set up telemetry collection
+/// Contains all settings needed to set up telemetry collection AND reporting
 class TelemetryConfig {
   /// Name of the service/app for telemetry identification
   final String serviceName;
@@ -34,6 +34,16 @@ class TelemetryConfig {
   /// Enable automatic navigation tracking
   final bool enableNavigationTracking;
 
+  // NEW: Report system configuration
+  /// Enable local data storage for generating reports
+  final bool enableLocalReporting;
+
+  /// Path for local report storage (null = use default)
+  final String? reportStoragePath;
+
+  /// How long to keep data for reports (default: 30 days)
+  final Duration dataRetentionPeriod;
+
   const TelemetryConfig({
     required this.serviceName,
     required this.endpoint,
@@ -45,6 +55,10 @@ class TelemetryConfig {
     this.enablePerformanceMonitoring = true,
     this.enableErrorReporting = true,
     this.enableNavigationTracking = true,
+    // NEW: Report configuration with sensible defaults
+    this.enableLocalReporting = false,
+    this.reportStoragePath,
+    this.dataRetentionPeriod = const Duration(days: 30),
   });
 
   /// Create a copy of this config with some values overridden
@@ -59,6 +73,10 @@ class TelemetryConfig {
     bool? enablePerformanceMonitoring,
     bool? enableErrorReporting,
     bool? enableNavigationTracking,
+    // NEW: Add report parameters to copyWith
+    bool? enableLocalReporting,
+    String? reportStoragePath,
+    Duration? dataRetentionPeriod,
   }) {
     return TelemetryConfig(
       serviceName: serviceName ?? this.serviceName,
@@ -74,6 +92,10 @@ class TelemetryConfig {
       enableErrorReporting: enableErrorReporting ?? this.enableErrorReporting,
       enableNavigationTracking:
           enableNavigationTracking ?? this.enableNavigationTracking,
+      // NEW: Add report fields to copyWith
+      enableLocalReporting: enableLocalReporting ?? this.enableLocalReporting,
+      reportStoragePath: reportStoragePath ?? this.reportStoragePath,
+      dataRetentionPeriod: dataRetentionPeriod ?? this.dataRetentionPeriod,
     );
   }
 }

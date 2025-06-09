@@ -1,6 +1,8 @@
 // lib/src/telemetry/edge_telemetry.dart
 
 import 'dart:async';
+import 'dart:io';
+import 'dart:math';
 
 import 'package:edge_telemetry_flutter/src/collectors/flutter_device_info_collector.dart';
 import 'package:edge_telemetry_flutter/src/core/config/telemetry_config.dart';
@@ -8,11 +10,18 @@ import 'package:edge_telemetry_flutter/src/core/interfaces/device_info_collector
 import 'package:edge_telemetry_flutter/src/core/interfaces/event_tracker.dart';
 import 'package:edge_telemetry_flutter/src/core/interfaces/network_monitor.dart';
 import 'package:edge_telemetry_flutter/src/core/interfaces/performance_monitor.dart';
+import 'package:edge_telemetry_flutter/src/core/interfaces/report_generator.dart';
+import 'package:edge_telemetry_flutter/src/core/interfaces/report_storage.dart';
+import 'package:edge_telemetry_flutter/src/core/models/generated_report.dart';
+import 'package:edge_telemetry_flutter/src/core/models/report_data.dart';
+import 'package:edge_telemetry_flutter/src/core/models/telemetry_session.dart';
 import 'package:edge_telemetry_flutter/src/managers/event_tracker_impl.dart';
 import 'package:edge_telemetry_flutter/src/managers/span_manager.dart';
 import 'package:edge_telemetry_flutter/src/monitors/flutter_network_monitor.dart'
     as network_monitor;
 import 'package:edge_telemetry_flutter/src/monitors/flutter_performance_monitor.dart';
+import 'package:edge_telemetry_flutter/src/reports/simple_report_generator.dart';
+import 'package:edge_telemetry_flutter/src/storage/memory_report_storage.dart';
 import 'package:edge_telemetry_flutter/src/widgets/edge_navigation_observer.dart'
     as nav_widget;
 import 'package:opentelemetry/api.dart';
@@ -39,6 +48,12 @@ class EdgeTelemetry {
   PerformanceMonitor? _performanceMonitor;
   DeviceInfoCollector? _deviceInfoCollector;
 
+  // NEW: Report system components
+  ReportStorage? _reportStorage;
+  ReportGenerator? _reportGenerator;
+  TelemetrySession? _currentSession;
+  String? _currentSessionId;
+
   // State
   bool _initialized = false;
   TelemetryConfig? _config;
@@ -61,6 +76,9 @@ class EdgeTelemetry {
     bool enableNetworkMonitoring = true,
     bool enablePerformanceMonitoring = true,
     bool enableNavigationTracking = true,
+    bool enableLocalReporting = false,
+    String? reportStoragePath,
+    Duration? dataRetentionPeriod,
   }) async {
     final config = TelemetryConfig(
       endpoint: endpoint,
@@ -72,6 +90,9 @@ class EdgeTelemetry {
       enableNetworkMonitoring: enableNetworkMonitoring,
       enablePerformanceMonitoring: enablePerformanceMonitoring,
       enableNavigationTracking: enableNavigationTracking,
+      enableLocalReporting: enableLocalReporting,
+      reportStoragePath: reportStoragePath,
+      dataRetentionPeriod: dataRetentionPeriod ?? const Duration(days: 30),
     );
 
     await instance._setup(config);
@@ -99,6 +120,11 @@ class EdgeTelemetry {
       // Step 5: Setup navigation tracking
       _setupNavigationTracking();
 
+      // NEW: Step 6: Setup local reporting (if enabled)
+      if (config.enableLocalReporting) {
+        await _setupLocalReporting();
+      }
+
       _initialized = true;
 
       // Track initialization
@@ -108,6 +134,7 @@ class EdgeTelemetry {
         'network_monitoring': config.enableNetworkMonitoring.toString(),
         'performance_monitoring': config.enablePerformanceMonitoring.toString(),
         'navigation_tracking': config.enableNavigationTracking.toString(),
+        'local_reporting': config.enableLocalReporting.toString(),
         'initialization_timestamp': DateTime.now().toIso8601String(),
       });
 
@@ -119,6 +146,10 @@ class EdgeTelemetry {
             '📊 Device: ${_globalAttributes['device.model'] ?? 'Unknown'} (${_globalAttributes['device.platform'] ?? 'Unknown'})');
         print(
             '📦 App: ${_globalAttributes['app.name'] ?? 'Unknown'} v${_globalAttributes['app.version'] ?? 'Unknown'}');
+        // NEW: Add this block
+        if (config.enableLocalReporting) {
+          print('📋 Local reporting: Enabled');
+        }
       }
     } catch (e, stackTrace) {
       if (config.debugMode) {
@@ -204,7 +235,55 @@ class EdgeTelemetry {
     }
   }
 
-  // ==================== PUBLIC API ====================
+  // ==================== NEW: REPORT SYSTEM METHODS ====================
+
+  /// Setup local reporting
+  Future<void> _setupLocalReporting() async {
+    try {
+      // Initialize storage (using memory storage for now)
+      _reportStorage = MemoryReportStorage();
+      await _reportStorage!.initialize();
+
+      // Initialize report generator
+      _reportGenerator = SimpleReportGenerator(_reportStorage!);
+
+      // Start a new session
+      await _startNewSession();
+
+      if (_config!.debugMode) {
+        print('📊 Local reporting initialized');
+      }
+    } catch (e) {
+      if (_config!.debugMode) {
+        print('⚠️ Local reporting setup failed: $e');
+      }
+      // Continue without local reporting
+    }
+  }
+
+  /// Start a new telemetry session
+  Future<void> _startNewSession() async {
+    if (_reportStorage == null) return;
+
+    _currentSessionId = _generateSessionId();
+    _currentSession = TelemetrySession(
+      sessionId: _currentSessionId!,
+      startTime: DateTime.now(),
+      deviceAttributes: Map.from(_globalAttributes),
+      appAttributes: {
+        'app.name': _globalAttributes['app.name'] ?? 'unknown',
+        'app.version': _globalAttributes['app.version'] ?? 'unknown',
+      },
+    );
+
+    await _reportStorage!.startSession(_currentSession!);
+  }
+
+  String _generateSessionId() {
+    return 'session_${DateTime.now().millisecondsSinceEpoch}_${_globalAttributes['device.platform'] ?? 'unknown'}';
+  }
+
+  // ==================== PUBLIC API (Enhanced) ====================
 
   /// Set user context for all subsequent telemetry
   void setUser({
@@ -269,7 +348,7 @@ class EdgeTelemetry {
         attributes: networkAttributes);
   }
 
-  /// Track a custom event
+  /// Track a custom event (ENHANCED - now also stores locally if reporting enabled)
   void trackEvent(String eventName, {Map<String, String>? attributes}) {
     _ensureInitialized();
 
@@ -278,10 +357,29 @@ class EdgeTelemetry {
       ...?attributes,
     };
 
+    // NEW: Store locally for reports if enabled
+    if (isLocalReportingEnabled && _currentSessionId != null) {
+      final event = TelemetryEvent(
+        id: _generateEventId(),
+        sessionId: _currentSessionId!,
+        eventName: eventName,
+        timestamp: DateTime.now(),
+        attributes: enrichedAttributes,
+        userId: _spanManager.userId,
+      );
+
+      _reportStorage!.storeEvent(event).catchError((e) {
+        if (_config?.debugMode == true) {
+          print('⚠️ Failed to store event locally: $e');
+        }
+      });
+    }
+
+    // Continue with normal tracking (unchanged)
     _eventTracker.trackEvent(eventName, attributes: enrichedAttributes);
   }
 
-  /// Track a custom metric
+  /// Track a custom metric (ENHANCED - now also stores locally if reporting enabled)
   void trackMetric(String metricName, double value,
       {Map<String, String>? attributes}) {
     _ensureInitialized();
@@ -291,6 +389,26 @@ class EdgeTelemetry {
       ...?attributes,
     };
 
+    // NEW: Store locally for reports if enabled
+    if (isLocalReportingEnabled && _currentSessionId != null) {
+      final metric = TelemetryMetric(
+        id: _generateMetricId(),
+        sessionId: _currentSessionId!,
+        metricName: metricName,
+        value: value,
+        timestamp: DateTime.now(),
+        attributes: enrichedAttributes,
+        userId: _spanManager.userId,
+      );
+
+      _reportStorage!.storeMetric(metric).catchError((e) {
+        if (_config?.debugMode == true) {
+          print('⚠️ Failed to store metric locally: $e');
+        }
+      });
+    }
+
+    // Continue with normal tracking (unchanged)
     _eventTracker.trackMetric(metricName, value,
         attributes: enrichedAttributes);
   }
@@ -351,7 +469,80 @@ class EdgeTelemetry {
   Map<String, String> get globalAttributes =>
       Map.unmodifiable(_globalAttributes);
 
+  // ==================== NEW: REPORT API METHODS ====================
+
+  /// Generate a summary report of recent activity
+  Future<GeneratedReport> generateSummaryReport({
+    DateTime? startTime,
+    DateTime? endTime,
+    String? title,
+  }) async {
+    _ensureReportingEnabled();
+    return await _reportGenerator!.generateSummaryReport(
+      startTime: startTime,
+      endTime: endTime,
+      title: title,
+    );
+  }
+
+  /// Generate a detailed performance report
+  Future<GeneratedReport> generatePerformanceReport({
+    DateTime? startTime,
+    DateTime? endTime,
+    String? title,
+  }) async {
+    _ensureReportingEnabled();
+    return await _reportGenerator!.generatePerformanceReport(
+      startTime: startTime,
+      endTime: endTime,
+      title: title,
+    );
+  }
+
+  /// Generate a user behavior analysis report
+  Future<GeneratedReport> generateUserBehaviorReport({
+    DateTime? startTime,
+    DateTime? endTime,
+    String? title,
+  }) async {
+    _ensureReportingEnabled();
+    return await _reportGenerator!.generateUserBehaviorReport(
+      startTime: startTime,
+      endTime: endTime,
+      title: title,
+    );
+  }
+
+  /// Export report to file
+  Future<String> exportReportToFile(
+      GeneratedReport report, String filePath) async {
+    _ensureReportingEnabled();
+
+    String content;
+    if (report.format == 'json') {
+      content = report.toJson().toString();
+    } else {
+      content = report.data.toString();
+    }
+
+    final file = File(filePath);
+    await file.writeAsString(content);
+    return filePath;
+  }
+
+  /// Check if local reporting is enabled
+  bool get isLocalReportingEnabled =>
+      _reportStorage != null && _reportGenerator != null;
+
+  /// Get current session information
+  TelemetrySession? getCurrentSession() => _currentSession;
+
   // ==================== INTERNAL METHODS ====================
+
+  String _generateEventId() =>
+      'event_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1000)}';
+  String _generateMetricId() =>
+      'metric_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1000)}';
 
   void _ensureInitialized() {
     if (!_initialized) {
@@ -360,8 +551,30 @@ class EdgeTelemetry {
     }
   }
 
+  void _ensureReportingEnabled() {
+    if (!isLocalReportingEnabled) {
+      throw StateError(
+        'Local reporting is not enabled. Set enableLocalReporting: true when initializing EdgeTelemetry.',
+      );
+    }
+  }
+
   /// Dispose all resources (call when app is shutting down)
   void dispose() {
+    // NEW: End current session if reporting is enabled
+    if (isLocalReportingEnabled && _currentSessionId != null) {
+      _currentSession = _currentSession?.copyWith(endTime: DateTime.now());
+      _reportStorage?.endSession(_currentSessionId!).catchError((e) {
+        if (_config?.debugMode == true) {
+          print('⚠️ Failed to end session: $e');
+        }
+      });
+    }
+
+    // NEW: Dispose reporting components
+    _reportStorage?.dispose();
+
+    // Existing cleanup (unchanged)
     _networkSubscription?.cancel();
     _networkMonitor?.dispose();
     _performanceMonitor?.dispose();
