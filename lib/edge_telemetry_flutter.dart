@@ -111,8 +111,12 @@ class EdgeTelemetry {
       // Collect device information
       await _collectDeviceInfo();
 
-      // Setup OpenTelemetry
-      await _setupJsonTelemetry();
+      // Setup telemetry (JSON or OpenTelemetry)
+      if (_config!.useJsonFormat) {
+        await _setupJsonTelemetry();
+      } else {
+        await _setupOpenTelemetry();
+      }
 
       // Initialize core managers
       _initializeManagers();
@@ -200,7 +204,11 @@ class EdgeTelemetry {
 
   /// Initialize core managers
   void _initializeManagers() {
-    _eventTracker = EventTrackerImpl(_spanManager);
+    // Only initialize SpanManager for OpenTelemetry mode
+    // For JSON mode, _eventTracker is already set up in _setupJsonTelemetry()
+    if (!_config!.useJsonFormat) {
+      _eventTracker = EventTrackerImpl(_spanManager);
+    }
   }
 
   /// Setup monitoring components
