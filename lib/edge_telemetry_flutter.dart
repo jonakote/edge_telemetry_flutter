@@ -15,7 +15,9 @@ import 'package:edge_telemetry_flutter/src/core/interfaces/report_storage.dart';
 import 'package:edge_telemetry_flutter/src/core/models/generated_report.dart';
 import 'package:edge_telemetry_flutter/src/core/models/report_data.dart';
 import 'package:edge_telemetry_flutter/src/core/models/telemetry_session.dart';
+import 'package:edge_telemetry_flutter/src/http/json_http_client.dart';
 import 'package:edge_telemetry_flutter/src/managers/event_tracker_impl.dart';
+import 'package:edge_telemetry_flutter/src/managers/json_event_tracker.dart';
 import 'package:edge_telemetry_flutter/src/managers/span_manager.dart';
 import 'package:edge_telemetry_flutter/src/monitors/flutter_network_monitor.dart'
     as network_monitor;
@@ -79,6 +81,7 @@ class EdgeTelemetry {
     bool enableLocalReporting = false,
     String? reportStoragePath,
     Duration? dataRetentionPeriod,
+    bool useJsonFormat = false,
   }) async {
     final config = TelemetryConfig(
       endpoint: endpoint,
@@ -105,22 +108,22 @@ class EdgeTelemetry {
     _config = config;
 
     try {
-      // Step 1: Collect device information
+      // Collect device information
       await _collectDeviceInfo();
 
-      // Step 2: Setup OpenTelemetry
-      await _setupOpenTelemetry();
+      // Setup OpenTelemetry
+      await _setupJsonTelemetry();
 
-      // Step 3: Initialize core managers
+      // Initialize core managers
       _initializeManagers();
 
-      // Step 4: Setup monitoring components
+      // Setup monitoring components
       await _setupMonitoring();
 
-      // Step 5: Setup navigation tracking
+      // Setup navigation tracking
       _setupNavigationTracking();
 
-      // NEW: Step 6: Setup local reporting (if enabled)
+      // Setup local reporting (if enabled)
       if (config.enableLocalReporting) {
         await _setupLocalReporting();
       }
@@ -183,6 +186,16 @@ class EdgeTelemetry {
 
     final tracer = globalTracerProvider.getTracer(_config!.serviceName);
     _spanManager = SpanManager(tracer, _globalAttributes);
+  }
+
+  /// Setup JSON telemetry instead of OpenTelemetry
+  Future<void> _setupJsonTelemetry() async {
+    final jsonClient = JsonHttpClient(endpoint: _config!.endpoint);
+    _eventTracker = JsonEventTracker(jsonClient, _globalAttributes);
+
+    if (_config!.debugMode) {
+      print('📡 JSON telemetry configured for endpoint: ${_config!.endpoint}');
+    }
   }
 
   /// Initialize core managers
