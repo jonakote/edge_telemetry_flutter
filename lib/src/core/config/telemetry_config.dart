@@ -44,6 +44,8 @@ class TelemetryConfig {
   /// How long to keep data for reports (default: 30 days)
   final Duration dataRetentionPeriod;
 
+  final bool useJsonFormat;
+
   const TelemetryConfig({
     required this.serviceName,
     required this.endpoint,
@@ -55,10 +57,10 @@ class TelemetryConfig {
     this.enablePerformanceMonitoring = true,
     this.enableErrorReporting = true,
     this.enableNavigationTracking = true,
-    // NEW: Report configuration with sensible defaults
     this.enableLocalReporting = false,
     this.reportStoragePath,
     this.dataRetentionPeriod = const Duration(days: 30),
+    this.useJsonFormat = true,
   });
 
   /// Create a copy of this config with some values overridden
@@ -77,6 +79,7 @@ class TelemetryConfig {
     bool? enableLocalReporting,
     String? reportStoragePath,
     Duration? dataRetentionPeriod,
+    bool? useJsonFormat,
   }) {
     return TelemetryConfig(
       serviceName: serviceName ?? this.serviceName,
@@ -96,6 +99,7 @@ class TelemetryConfig {
       enableLocalReporting: enableLocalReporting ?? this.enableLocalReporting,
       reportStoragePath: reportStoragePath ?? this.reportStoragePath,
       dataRetentionPeriod: dataRetentionPeriod ?? this.dataRetentionPeriod,
+      useJsonFormat: useJsonFormat ?? this.useJsonFormat,
     );
   }
 }
