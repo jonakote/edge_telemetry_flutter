@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.2.1] - 2024-12-19
+## [1.1.1] - 2024-12-19
 
 ### Added
 - JSON telemetry support as alternative to protobuf format
