@@ -41,7 +41,7 @@ class EdgeTelemetry {
   EdgeTelemetry._();
 
   // Core components
-  late SpanManager _spanManager;
+  SpanManager? _spanManager; // Made nullable for JSON mode
   late EventTracker _eventTracker;
   late nav_widget.EdgeNavigationObserver _navigationObserver;
 
@@ -96,6 +96,7 @@ class EdgeTelemetry {
       enableLocalReporting: enableLocalReporting,
       reportStoragePath: reportStoragePath,
       dataRetentionPeriod: dataRetentionPeriod ?? const Duration(days: 30),
+      useJsonFormat: useJsonFormat, // FIXED: Added this line
     );
 
     await instance._setup(config);
@@ -111,8 +112,8 @@ class EdgeTelemetry {
       // Collect device information
       await _collectDeviceInfo();
 
-      // Setup telemetry (JSON or OpenTelemetry)
-      if (_config!.useJsonFormat) {
+      // FIXED: Setup telemetry (JSON or OpenTelemetry)
+      if (config.useJsonFormat) {
         await _setupJsonTelemetry();
       } else {
         await _setupOpenTelemetry();
@@ -142,6 +143,7 @@ class EdgeTelemetry {
         'performance_monitoring': config.enablePerformanceMonitoring.toString(),
         'navigation_tracking': config.enableNavigationTracking.toString(),
         'local_reporting': config.enableLocalReporting.toString(),
+        'json_format': config.useJsonFormat.toString(), // ADDED
         'initialization_timestamp': DateTime.now().toIso8601String(),
       });
 
@@ -150,10 +152,11 @@ class EdgeTelemetry {
         print('📱 Service: ${config.serviceName}');
         print('🔗 Endpoint: ${config.endpoint}');
         print(
+            '📡 Format: ${config.useJsonFormat ? 'JSON' : 'OpenTelemetry'}'); // ADDED
+        print(
             '📊 Device: ${_globalAttributes['device.model'] ?? 'Unknown'} (${_globalAttributes['device.platform'] ?? 'Unknown'})');
         print(
             '📦 App: ${_globalAttributes['app.name'] ?? 'Unknown'} v${_globalAttributes['app.version'] ?? 'Unknown'}');
-        // NEW: Add this block
         if (config.enableLocalReporting) {
           print('📋 Local reporting: Enabled');
         }
@@ -182,9 +185,6 @@ class EdgeTelemetry {
       ),
     ];
 
-    // Note: SimpleSpanProcessor and ConsoleExporter are not available in this OpenTelemetry version
-    // Debug output will be handled through the batch processor
-
     final tracerProvider = otel_sdk.TracerProviderBase(processors: processors);
     registerGlobalTracerProvider(tracerProvider);
 
@@ -202,12 +202,12 @@ class EdgeTelemetry {
     }
   }
 
-  /// Initialize core managers
+  /// FIXED: Initialize core managers
   void _initializeManagers() {
-    // Only initialize SpanManager for OpenTelemetry mode
+    // Only initialize EventTrackerImpl for OpenTelemetry mode
     // For JSON mode, _eventTracker is already set up in _setupJsonTelemetry()
     if (!_config!.useJsonFormat) {
-      _eventTracker = EventTrackerImpl(_spanManager);
+      _eventTracker = EventTrackerImpl(_spanManager!);
     }
   }
 
@@ -223,9 +223,13 @@ class EdgeTelemetry {
       _networkSubscription =
           _networkMonitor!.networkTypeChanges.listen((networkType) {
         _globalAttributes['network.type'] = networkType;
-        _spanManager = SpanManager(
-            globalTracerProvider.getTracer(_config!.serviceName),
-            _globalAttributes);
+
+        // FIXED: Only update spanManager for OpenTelemetry mode
+        if (!_config!.useJsonFormat && _spanManager != null) {
+          _spanManager = SpanManager(
+              globalTracerProvider.getTracer(_config!.serviceName),
+              _globalAttributes);
+        }
       });
     }
 
@@ -244,14 +248,22 @@ class EdgeTelemetry {
         onEvent: _eventTracker.trackEvent,
         onMetric: _eventTracker.trackMetric,
         onSpanStart: (spanName, {attributes}) {
-          final span =
-              _spanManager.createSpan(spanName, attributes: attributes);
-          // Extract route name from span name
-          final routeName =
-              spanName.startsWith('screen.') ? spanName.substring(7) : spanName;
-          _navigationObserver.registerScreenSpan(routeName, span);
+          // FIXED: Only use spanManager for OpenTelemetry mode
+          if (!_config!.useJsonFormat && _spanManager != null) {
+            final span =
+                _spanManager!.createSpan(spanName, attributes: attributes);
+            final routeName = spanName.startsWith('screen.')
+                ? spanName.substring(7)
+                : spanName;
+            _navigationObserver.registerScreenSpan(routeName, span);
+          }
         },
-        onSpanEnd: _spanManager.endSpan,
+        onSpanEnd: (span) {
+          // FIXED: Only use spanManager for OpenTelemetry mode
+          if (!_config!.useJsonFormat && _spanManager != null) {
+            _spanManager!.endSpan(span);
+          }
+        },
       );
     }
   }
@@ -306,7 +318,7 @@ class EdgeTelemetry {
 
   // ==================== PUBLIC API (Enhanced) ====================
 
-  /// Set user context for all subsequent telemetry
+  /// FIXED: Set user context for all subsequent telemetry
   void setUser({
     required String userId,
     String? email,
@@ -314,12 +326,16 @@ class EdgeTelemetry {
     Map<String, String>? customAttributes,
   }) {
     _ensureInitialized();
-    _spanManager.setUser(
-      userId: userId,
-      email: email,
-      name: name,
-      customAttributes: customAttributes,
-    );
+
+    // Only use spanManager in OpenTelemetry mode
+    if (!_config!.useJsonFormat && _spanManager != null) {
+      _spanManager!.setUser(
+        userId: userId,
+        email: email,
+        name: name,
+        customAttributes: customAttributes,
+      );
+    }
 
     _eventTracker.trackEvent('user.context_set', attributes: {
       'user.id': userId,
@@ -330,21 +346,34 @@ class EdgeTelemetry {
     });
   }
 
-  /// Clear user context
+  /// FIXED: Clear user context
   void clearUser() {
     _ensureInitialized();
-    _spanManager.clearUser();
+
+    // Only use spanManager in OpenTelemetry mode
+    if (!_config!.useJsonFormat && _spanManager != null) {
+      _spanManager!.clearUser();
+    }
+
     _eventTracker.trackEvent('user.context_cleared');
   }
 
-  /// Execute a function within a span with automatic lifecycle management
+  /// FIXED: Execute a function within a span with automatic lifecycle management
   Future<T> withSpan<T>(
     String spanName,
     Future<T> Function() operation, {
     Map<String, String>? attributes,
   }) async {
     _ensureInitialized();
-    return _spanManager.withSpan(spanName, operation, attributes: attributes);
+
+    // Only use spanManager in OpenTelemetry mode
+    if (!_config!.useJsonFormat && _spanManager != null) {
+      return _spanManager!
+          .withSpan(spanName, operation, attributes: attributes);
+    } else {
+      // For JSON mode, just execute the operation
+      return await operation();
+    }
   }
 
   /// Execute a network operation with automatic network context
@@ -386,7 +415,7 @@ class EdgeTelemetry {
         eventName: eventName,
         timestamp: DateTime.now(),
         attributes: enrichedAttributes,
-        userId: _spanManager.userId,
+        userId: _spanManager?.userId, // FIXED: Made nullable
       );
 
       _reportStorage!.storeEvent(event).catchError((e) {
@@ -419,7 +448,7 @@ class EdgeTelemetry {
         value: value,
         timestamp: DateTime.now(),
         attributes: enrichedAttributes,
-        userId: _spanManager.userId,
+        userId: _spanManager?.userId, // FIXED: Made nullable
       );
 
       _reportStorage!.storeMetric(metric).catchError((e) {
@@ -448,16 +477,26 @@ class EdgeTelemetry {
         stackTrace: stackTrace, attributes: enrichedAttributes);
   }
 
-  /// Create a span manually (for advanced use cases)
-  Span startSpan(String name, {Map<String, String>? attributes}) {
+  /// FIXED: Create a span manually (for advanced use cases)
+  Span? startSpan(String name, {Map<String, String>? attributes}) {
     _ensureInitialized();
-    return _spanManager.createSpan(name, attributes: attributes);
+
+    // Only available in OpenTelemetry mode
+    if (!_config!.useJsonFormat && _spanManager != null) {
+      return _spanManager!.createSpan(name, attributes: attributes);
+    }
+    return null;
   }
 
-  /// End a span manually (for advanced use cases)
-  void endSpan(Span span) {
+  /// FIXED: End a span manually (for advanced use cases)
+  void endSpan(Span? span) {
+    if (span == null) return;
     _ensureInitialized();
-    _spanManager.endSpan(span);
+
+    // Only available in OpenTelemetry mode
+    if (!_config!.useJsonFormat && _spanManager != null) {
+      _spanManager!.endSpan(span);
+    }
   }
 
   /// Get the navigation observer for MaterialApp
