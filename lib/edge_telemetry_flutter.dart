@@ -16,7 +16,7 @@ import 'package:edge_telemetry_flutter/src/core/models/telemetry_session.dart';
 import 'package:edge_telemetry_flutter/src/http/json_http_client.dart';
 import 'package:edge_telemetry_flutter/src/managers/event_tracker_impl.dart';
 import 'package:edge_telemetry_flutter/src/managers/json_event_tracker.dart';
-import 'package:edge_telemetry_flutter/src/managers/session_manager.dart'; // NEW
+import 'package:edge_telemetry_flutter/src/managers/session_manager.dart';
 import 'package:edge_telemetry_flutter/src/managers/span_manager.dart';
 import 'package:edge_telemetry_flutter/src/managers/user_id_manager.dart';
 import 'package:edge_telemetry_flutter/src/monitors/flutter_network_monitor.dart'
@@ -235,7 +235,8 @@ class EdgeTelemetry {
   /// Setup JSON telemetry instead of OpenTelemetry
   Future<void> _setupJsonTelemetry() async {
     final jsonClient = JsonHttpClient(endpoint: _config!.endpoint);
-    _eventTracker = JsonEventTracker(jsonClient, _globalAttributes);
+    _eventTracker =
+        JsonEventTracker(jsonClient, () => _getEnrichedAttributes());
 
     if (_config!.debugMode) {
       print('📡 JSON telemetry configured for endpoint: ${_config!.endpoint}');

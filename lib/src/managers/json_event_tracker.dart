@@ -5,9 +5,11 @@ import '../http/json_http_client.dart';
 
 class JsonEventTracker implements EventTracker {
   final JsonHttpClient _httpClient;
-  final Map<String, String> _globalAttributes;
+  final Map<String, String> Function()
+      _getAttributes; // CHANGED: Function instead of static map
 
-  JsonEventTracker(this._httpClient, this._globalAttributes);
+  JsonEventTracker(
+      this._httpClient, this._getAttributes); // CHANGED: Constructor
 
   @override
   void trackEvent(String eventName, {Map<String, String>? attributes}) {
@@ -16,7 +18,7 @@ class JsonEventTracker implements EventTracker {
       'eventName': eventName,
       'timestamp': DateTime.now().toIso8601String(),
       'attributes': {
-        ..._globalAttributes,
+        ..._getAttributes(), // CHANGED: Call function to get current attributes
         ...?attributes,
       },
     };
@@ -33,7 +35,7 @@ class JsonEventTracker implements EventTracker {
       'value': value,
       'timestamp': DateTime.now().toIso8601String(),
       'attributes': {
-        ..._globalAttributes,
+        ..._getAttributes(), // CHANGED: Call function to get current attributes
         ...?attributes,
       },
     };
@@ -49,7 +51,7 @@ class JsonEventTracker implements EventTracker {
       'error': error.toString(),
       'timestamp': DateTime.now().toIso8601String(),
       'attributes': {
-        ..._globalAttributes,
+        ..._getAttributes(), // CHANGED: Call function to get current attributes
         ...?attributes,
       },
     };
