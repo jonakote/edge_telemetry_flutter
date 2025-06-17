@@ -1,5 +1,3 @@
-// lib/edge_telemetry_flutter.dart
-
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -18,8 +16,9 @@ import 'package:edge_telemetry_flutter/src/core/models/telemetry_session.dart';
 import 'package:edge_telemetry_flutter/src/http/json_http_client.dart';
 import 'package:edge_telemetry_flutter/src/managers/event_tracker_impl.dart';
 import 'package:edge_telemetry_flutter/src/managers/json_event_tracker.dart';
+import 'package:edge_telemetry_flutter/src/managers/session_manager.dart'; // NEW
 import 'package:edge_telemetry_flutter/src/managers/span_manager.dart';
-import 'package:edge_telemetry_flutter/src/managers/user_id_manager.dart'; // NEW
+import 'package:edge_telemetry_flutter/src/managers/user_id_manager.dart';
 import 'package:edge_telemetry_flutter/src/monitors/flutter_network_monitor.dart'
     as network_monitor;
 import 'package:edge_telemetry_flutter/src/monitors/flutter_performance_monitor.dart';
@@ -30,11 +29,7 @@ import 'package:edge_telemetry_flutter/src/widgets/edge_navigation_observer.dart
 import 'package:opentelemetry/api.dart';
 import 'package:opentelemetry/sdk.dart' as otel_sdk;
 
-/// Main EdgeTelemetry class that orchestrates all monitoring components
-///
-/// This is the primary interface for users of the EdgeTelemetry package.
-/// It manages the lifecycle of all monitoring components and provides
-/// a simple, unified API for telemetry operations.
+/// Main EdgeTelemetry class with enhanced session tracking
 class EdgeTelemetry {
   static EdgeTelemetry? _instance;
   static EdgeTelemetry get instance => _instance ??= EdgeTelemetry._();
@@ -42,12 +37,13 @@ class EdgeTelemetry {
   EdgeTelemetry._();
 
   // Core components
-  SpanManager? _spanManager; // Made nullable for JSON mode
+  SpanManager? _spanManager;
   late EventTracker _eventTracker;
   late nav_widget.EdgeNavigationObserver _navigationObserver;
 
-  // NEW: User ID management
+  // User and session management
   late UserIdManager _userIdManager;
+  late SessionManager _sessionManager; // NEW
   String? _currentUserId;
 
   // User profile data (separate from ID)
@@ -73,9 +69,6 @@ class EdgeTelemetry {
   StreamSubscription<String>? _networkSubscription;
 
   /// Initialize EdgeTelemetry with the given configuration
-  ///
-  /// This is the main entry point for setting up telemetry.
-  /// Call this once in your app's main() function.
   static Future<void> initialize({
     required String endpoint,
     required String serviceName,
@@ -117,8 +110,11 @@ class EdgeTelemetry {
     _config = config;
 
     try {
-      // NEW: Initialize user ID manager and get/generate user ID
+      // Initialize user ID manager and get/generate user ID
       await _initializeUserId();
+
+      // NEW: Initialize session manager
+      await _initializeSession();
 
       // Collect device information
       await _collectDeviceInfo();
@@ -155,7 +151,7 @@ class EdgeTelemetry {
         'navigation_tracking': config.enableNavigationTracking.toString(),
         'local_reporting': config.enableLocalReporting.toString(),
         'json_format': config.useJsonFormat.toString(),
-        'user_id_auto_generated': 'true', // NEW
+        'user_id_auto_generated': 'true',
         'initialization_timestamp': DateTime.now().toIso8601String(),
       });
 
@@ -164,7 +160,9 @@ class EdgeTelemetry {
         print('📱 Service: ${config.serviceName}');
         print('🔗 Endpoint: ${config.endpoint}');
         print('📡 Format: ${config.useJsonFormat ? 'JSON' : 'OpenTelemetry'}');
-        print('👤 User ID: $_currentUserId'); // NEW
+        print('👤 User ID: $_currentUserId');
+        print('🔄 Session ID: ${_sessionManager.currentSessionId}');
+        print('📊 Session Stats: ${_sessionManager.getSessionStats()}');
         print(
             '📊 Device: ${_globalAttributes['device.model'] ?? 'Unknown'} (${_globalAttributes['device.platform'] ?? 'Unknown'})');
         print(
@@ -182,10 +180,17 @@ class EdgeTelemetry {
     }
   }
 
-  /// NEW: Initialize user ID (auto-generated and persistent)
+  /// Initialize user ID (auto-generated and persistent)
   Future<void> _initializeUserId() async {
     _userIdManager = UserIdManager();
     _currentUserId = await _userIdManager.getUserId();
+  }
+
+  /// NEW: Initialize session manager and start session
+  Future<void> _initializeSession() async {
+    _sessionManager = SessionManager();
+    _currentSessionId = _generateSessionId();
+    await _sessionManager.startSession(_currentSessionId!);
   }
 
   /// Collect device and app information
@@ -194,8 +199,19 @@ class EdgeTelemetry {
     _globalAttributes = await _deviceInfoCollector!.collectDeviceInfo();
     _globalAttributes.addAll(_config!.globalAttributes);
 
-    // NEW: Add auto-generated user ID to global attributes
+    // Add auto-generated user ID to global attributes
     _globalAttributes['user.id'] = _currentUserId!;
+  }
+
+  /// Get enriched attributes with session details
+  Map<String, String> _getEnrichedAttributes(
+      [Map<String, String>? customAttributes]) {
+    return {
+      ..._globalAttributes,
+      ..._sessionManager.getSessionAttributes(), // NEW: Session details
+      'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
+      ...?customAttributes,
+    };
   }
 
   /// Setup OpenTelemetry SDK
@@ -212,7 +228,7 @@ class EdgeTelemetry {
     final tracer = globalTracerProvider.getTracer(_config!.serviceName);
     _spanManager = SpanManager(tracer, _globalAttributes);
 
-    // NEW: Set user context in span manager with auto-generated ID
+    // Set user context in span manager with auto-generated ID
     _spanManager!.setUser(userId: _currentUserId!);
   }
 
@@ -229,7 +245,6 @@ class EdgeTelemetry {
   /// Initialize core managers
   void _initializeManagers() {
     // Only initialize EventTrackerImpl for OpenTelemetry mode
-    // For JSON mode, _eventTracker is already set up in _setupJsonTelemetry()
     if (!_config!.useJsonFormat) {
       _eventTracker = EventTrackerImpl(_spanManager!);
     }
@@ -253,7 +268,7 @@ class EdgeTelemetry {
           _spanManager = SpanManager(
               globalTracerProvider.getTracer(_config!.serviceName),
               _globalAttributes);
-          // NEW: Maintain user context after network changes
+          // Maintain user context after network changes
           _spanManager!.setUser(userId: _currentUserId!);
           _applyUserProfile();
         }
@@ -272,7 +287,17 @@ class EdgeTelemetry {
   void _setupNavigationTracking() {
     if (_config!.enableNavigationTracking) {
       _navigationObserver = nav_widget.EdgeNavigationObserver(
-        onEvent: _eventTracker.trackEvent,
+        onEvent: (eventName, {attributes}) {
+          // NEW: Track screen visits for session
+          if (eventName == 'navigation.route_change' &&
+              attributes != null &&
+              attributes.containsKey('navigation.to')) {
+            _sessionManager.recordScreen(attributes['navigation.to']!);
+          }
+
+          // Track the event
+          _eventTracker.trackEvent(eventName, attributes: attributes);
+        },
         onMetric: _eventTracker.trackMetric,
         onSpanStart: (spanName, {attributes}) {
           // Only use spanManager for OpenTelemetry mode
@@ -325,11 +350,10 @@ class EdgeTelemetry {
   Future<void> _startNewSession() async {
     if (_reportStorage == null) return;
 
-    _currentSessionId = _generateSessionId();
     _currentSession = TelemetrySession(
       sessionId: _currentSessionId!,
       startTime: DateTime.now(),
-      userId: _currentUserId, // NEW: Include auto-generated user ID
+      userId: _currentUserId,
       deviceAttributes: Map.from(_globalAttributes),
       appAttributes: {
         'app.name': _globalAttributes['app.name'] ?? 'unknown',
@@ -344,10 +368,9 @@ class EdgeTelemetry {
     return 'session_${DateTime.now().millisecondsSinceEpoch}_${_globalAttributes['device.platform'] ?? 'unknown'}';
   }
 
-  // ==================== NEW: USER PROFILE API ====================
+  // ==================== USER PROFILE API ====================
 
   /// Set user profile information (name, email, phone)
-  /// Note: User ID is auto-generated and cannot be overridden
   void setUserProfile({
     String? name,
     String? email,
@@ -421,10 +444,11 @@ class EdgeTelemetry {
   /// Get current user profile (read-only)
   Map<String, String> get currentUserProfile => Map.unmodifiable(_userProfile);
 
-  // ==================== EXISTING API (Updated) ====================
+  /// NEW: Get current session information
+  Map<String, dynamic> get currentSessionInfo =>
+      _sessionManager.getSessionStats();
 
-  /// REMOVED: setUser() method - replaced with setUserProfile()
-  /// REMOVED: clearUser() method - replaced with clearUserProfile()
+  // ==================== ENHANCED API WITH SESSION DETAILS ====================
 
   /// Execute a function within a span with automatic lifecycle management
   Future<T> withSpan<T>(
@@ -436,8 +460,8 @@ class EdgeTelemetry {
 
     // Only use spanManager in OpenTelemetry mode
     if (!_config!.useJsonFormat && _spanManager != null) {
-      return _spanManager!
-          .withSpan(spanName, operation, attributes: attributes);
+      return _spanManager!.withSpan(spanName, operation,
+          attributes: _getEnrichedAttributes(attributes));
     } else {
       // For JSON mode, just execute the operation
       return await operation();
@@ -457,7 +481,6 @@ class EdgeTelemetry {
     final networkAttributes = {
       'http.url': url,
       'http.method': method,
-      'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
       'network.operation': operationName,
       ...?attributes,
     };
@@ -466,15 +489,14 @@ class EdgeTelemetry {
         attributes: networkAttributes);
   }
 
-  /// Track a custom event (ENHANCED - now auto-includes user ID)
+  /// Track a custom event (ENHANCED - now includes session details)
   void trackEvent(String eventName, {Map<String, String>? attributes}) {
     _ensureInitialized();
 
-    final enrichedAttributes = {
-      'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
-      // User ID automatically included in global attributes
-      ...?attributes,
-    };
+    // NEW: Record event in session manager
+    _sessionManager.recordEvent();
+
+    final enrichedAttributes = _getEnrichedAttributes(attributes);
 
     // Store locally for reports if enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
@@ -484,7 +506,7 @@ class EdgeTelemetry {
         eventName: eventName,
         timestamp: DateTime.now(),
         attributes: enrichedAttributes,
-        userId: _currentUserId, // NEW: Auto-generated user ID
+        userId: _currentUserId,
       );
 
       _reportStorage!.storeEvent(event).catchError((e) {
@@ -498,16 +520,15 @@ class EdgeTelemetry {
     _eventTracker.trackEvent(eventName, attributes: enrichedAttributes);
   }
 
-  /// Track a custom metric (ENHANCED - now auto-includes user ID)
+  /// Track a custom metric (ENHANCED - now includes session details)
   void trackMetric(String metricName, double value,
       {Map<String, String>? attributes}) {
     _ensureInitialized();
 
-    final enrichedAttributes = {
-      'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
-      // User ID automatically included in global attributes
-      ...?attributes,
-    };
+    // NEW: Record metric in session manager
+    _sessionManager.recordMetric();
+
+    final enrichedAttributes = _getEnrichedAttributes(attributes);
 
     // Store locally for reports if enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
@@ -518,7 +539,7 @@ class EdgeTelemetry {
         value: value,
         timestamp: DateTime.now(),
         attributes: enrichedAttributes,
-        userId: _currentUserId, // NEW: Auto-generated user ID
+        userId: _currentUserId,
       );
 
       _reportStorage!.storeMetric(metric).catchError((e) {
@@ -538,11 +559,7 @@ class EdgeTelemetry {
       {StackTrace? stackTrace, Map<String, String>? attributes}) {
     _ensureInitialized();
 
-    final enrichedAttributes = {
-      'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
-      // User ID automatically included in global attributes
-      ...?attributes,
-    };
+    final enrichedAttributes = _getEnrichedAttributes(attributes);
 
     _eventTracker.trackError(error,
         stackTrace: stackTrace, attributes: enrichedAttributes);
@@ -554,7 +571,8 @@ class EdgeTelemetry {
 
     // Only available in OpenTelemetry mode
     if (!_config!.useJsonFormat && _spanManager != null) {
-      return _spanManager!.createSpan(name, attributes: attributes);
+      return _spanManager!
+          .createSpan(name, attributes: _getEnrichedAttributes(attributes));
     }
     return null;
   }
@@ -596,9 +614,9 @@ class EdgeTelemetry {
   /// Get current configuration
   TelemetryConfig? get config => _config;
 
-  /// Get global attributes (now includes auto-generated user ID)
+  /// Get global attributes (now includes session details)
   Map<String, String> get globalAttributes =>
-      Map.unmodifiable(_globalAttributes);
+      Map.unmodifiable(_getEnrichedAttributes());
 
   // ==================== REPORT API METHODS ====================
 
@@ -692,6 +710,9 @@ class EdgeTelemetry {
 
   /// Dispose all resources (call when app is shutting down)
   void dispose() {
+    // NEW: End session before disposing
+    _sessionManager.endSession();
+
     // End current session if reporting is enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
       _currentSession = _currentSession?.copyWith(endTime: DateTime.now());
