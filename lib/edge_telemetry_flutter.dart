@@ -1,4 +1,4 @@
-// lib/src/telemetry/edge_telemetry.dart
+// lib/edge_telemetry_flutter.dart
 
 import 'dart:async';
 import 'dart:io';
@@ -19,6 +19,7 @@ import 'package:edge_telemetry_flutter/src/http/json_http_client.dart';
 import 'package:edge_telemetry_flutter/src/managers/event_tracker_impl.dart';
 import 'package:edge_telemetry_flutter/src/managers/json_event_tracker.dart';
 import 'package:edge_telemetry_flutter/src/managers/span_manager.dart';
+import 'package:edge_telemetry_flutter/src/managers/user_id_manager.dart'; // NEW
 import 'package:edge_telemetry_flutter/src/monitors/flutter_network_monitor.dart'
     as network_monitor;
 import 'package:edge_telemetry_flutter/src/monitors/flutter_performance_monitor.dart';
@@ -45,12 +46,19 @@ class EdgeTelemetry {
   late EventTracker _eventTracker;
   late nav_widget.EdgeNavigationObserver _navigationObserver;
 
+  // NEW: User ID management
+  late UserIdManager _userIdManager;
+  String? _currentUserId;
+
+  // User profile data (separate from ID)
+  final Map<String, String> _userProfile = {};
+
   // Monitoring components
   NetworkMonitor? _networkMonitor;
   PerformanceMonitor? _performanceMonitor;
   DeviceInfoCollector? _deviceInfoCollector;
 
-  // NEW: Report system components
+  // Report system components
   ReportStorage? _reportStorage;
   ReportGenerator? _reportGenerator;
   TelemetrySession? _currentSession;
@@ -96,7 +104,7 @@ class EdgeTelemetry {
       enableLocalReporting: enableLocalReporting,
       reportStoragePath: reportStoragePath,
       dataRetentionPeriod: dataRetentionPeriod ?? const Duration(days: 30),
-      useJsonFormat: useJsonFormat, // FIXED: Added this line
+      useJsonFormat: useJsonFormat,
     );
 
     await instance._setup(config);
@@ -109,10 +117,13 @@ class EdgeTelemetry {
     _config = config;
 
     try {
+      // NEW: Initialize user ID manager and get/generate user ID
+      await _initializeUserId();
+
       // Collect device information
       await _collectDeviceInfo();
 
-      // FIXED: Setup telemetry (JSON or OpenTelemetry)
+      // Setup telemetry (JSON or OpenTelemetry)
       if (config.useJsonFormat) {
         await _setupJsonTelemetry();
       } else {
@@ -143,7 +154,8 @@ class EdgeTelemetry {
         'performance_monitoring': config.enablePerformanceMonitoring.toString(),
         'navigation_tracking': config.enableNavigationTracking.toString(),
         'local_reporting': config.enableLocalReporting.toString(),
-        'json_format': config.useJsonFormat.toString(), // ADDED
+        'json_format': config.useJsonFormat.toString(),
+        'user_id_auto_generated': 'true', // NEW
         'initialization_timestamp': DateTime.now().toIso8601String(),
       });
 
@@ -151,8 +163,8 @@ class EdgeTelemetry {
         print('✅ EdgeTelemetry initialized successfully');
         print('📱 Service: ${config.serviceName}');
         print('🔗 Endpoint: ${config.endpoint}');
-        print(
-            '📡 Format: ${config.useJsonFormat ? 'JSON' : 'OpenTelemetry'}'); // ADDED
+        print('📡 Format: ${config.useJsonFormat ? 'JSON' : 'OpenTelemetry'}');
+        print('👤 User ID: $_currentUserId'); // NEW
         print(
             '📊 Device: ${_globalAttributes['device.model'] ?? 'Unknown'} (${_globalAttributes['device.platform'] ?? 'Unknown'})');
         print(
@@ -170,11 +182,20 @@ class EdgeTelemetry {
     }
   }
 
+  /// NEW: Initialize user ID (auto-generated and persistent)
+  Future<void> _initializeUserId() async {
+    _userIdManager = UserIdManager();
+    _currentUserId = await _userIdManager.getUserId();
+  }
+
   /// Collect device and app information
   Future<void> _collectDeviceInfo() async {
     _deviceInfoCollector = FlutterDeviceInfoCollector();
     _globalAttributes = await _deviceInfoCollector!.collectDeviceInfo();
     _globalAttributes.addAll(_config!.globalAttributes);
+
+    // NEW: Add auto-generated user ID to global attributes
+    _globalAttributes['user.id'] = _currentUserId!;
   }
 
   /// Setup OpenTelemetry SDK
@@ -190,6 +211,9 @@ class EdgeTelemetry {
 
     final tracer = globalTracerProvider.getTracer(_config!.serviceName);
     _spanManager = SpanManager(tracer, _globalAttributes);
+
+    // NEW: Set user context in span manager with auto-generated ID
+    _spanManager!.setUser(userId: _currentUserId!);
   }
 
   /// Setup JSON telemetry instead of OpenTelemetry
@@ -202,7 +226,7 @@ class EdgeTelemetry {
     }
   }
 
-  /// FIXED: Initialize core managers
+  /// Initialize core managers
   void _initializeManagers() {
     // Only initialize EventTrackerImpl for OpenTelemetry mode
     // For JSON mode, _eventTracker is already set up in _setupJsonTelemetry()
@@ -224,11 +248,14 @@ class EdgeTelemetry {
           _networkMonitor!.networkTypeChanges.listen((networkType) {
         _globalAttributes['network.type'] = networkType;
 
-        // FIXED: Only update spanManager for OpenTelemetry mode
+        // Only update spanManager for OpenTelemetry mode
         if (!_config!.useJsonFormat && _spanManager != null) {
           _spanManager = SpanManager(
               globalTracerProvider.getTracer(_config!.serviceName),
               _globalAttributes);
+          // NEW: Maintain user context after network changes
+          _spanManager!.setUser(userId: _currentUserId!);
+          _applyUserProfile();
         }
       });
     }
@@ -248,7 +275,7 @@ class EdgeTelemetry {
         onEvent: _eventTracker.trackEvent,
         onMetric: _eventTracker.trackMetric,
         onSpanStart: (spanName, {attributes}) {
-          // FIXED: Only use spanManager for OpenTelemetry mode
+          // Only use spanManager for OpenTelemetry mode
           if (!_config!.useJsonFormat && _spanManager != null) {
             final span =
                 _spanManager!.createSpan(spanName, attributes: attributes);
@@ -259,7 +286,7 @@ class EdgeTelemetry {
           }
         },
         onSpanEnd: (span) {
-          // FIXED: Only use spanManager for OpenTelemetry mode
+          // Only use spanManager for OpenTelemetry mode
           if (!_config!.useJsonFormat && _spanManager != null) {
             _spanManager!.endSpan(span);
           }
@@ -268,7 +295,7 @@ class EdgeTelemetry {
     }
   }
 
-  // ==================== NEW: REPORT SYSTEM METHODS ====================
+  // ==================== REPORT SYSTEM METHODS ====================
 
   /// Setup local reporting
   Future<void> _setupLocalReporting() async {
@@ -302,6 +329,7 @@ class EdgeTelemetry {
     _currentSession = TelemetrySession(
       sessionId: _currentSessionId!,
       startTime: DateTime.now(),
+      userId: _currentUserId, // NEW: Include auto-generated user ID
       deviceAttributes: Map.from(_globalAttributes),
       appAttributes: {
         'app.name': _globalAttributes['app.name'] ?? 'unknown',
@@ -316,49 +344,89 @@ class EdgeTelemetry {
     return 'session_${DateTime.now().millisecondsSinceEpoch}_${_globalAttributes['device.platform'] ?? 'unknown'}';
   }
 
-  // ==================== PUBLIC API (Enhanced) ====================
+  // ==================== NEW: USER PROFILE API ====================
 
-  /// FIXED: Set user context for all subsequent telemetry
-  void setUser({
-    required String userId,
-    String? email,
+  /// Set user profile information (name, email, phone)
+  /// Note: User ID is auto-generated and cannot be overridden
+  void setUserProfile({
     String? name,
+    String? email,
+    String? phone,
     Map<String, String>? customAttributes,
   }) {
     _ensureInitialized();
 
-    // Only use spanManager in OpenTelemetry mode
-    if (!_config!.useJsonFormat && _spanManager != null) {
-      _spanManager!.setUser(
-        userId: userId,
-        email: email,
-        name: name,
-        customAttributes: customAttributes,
-      );
-    }
+    // Clear existing profile
+    _userProfile.clear();
 
-    _eventTracker.trackEvent('user.context_set', attributes: {
-      'user.id': userId,
-      if (email != null) 'user.has_email': 'true',
-      if (name != null) 'user.has_name': 'true',
+    // Add profile data
+    if (name != null) _userProfile['user.name'] = name;
+    if (email != null) _userProfile['user.email'] = email;
+    if (phone != null) _userProfile['user.phone'] = phone;
+    if (customAttributes != null) _userProfile.addAll(customAttributes);
+
+    // Apply to span manager (OpenTelemetry mode)
+    _applyUserProfile();
+
+    // Track profile set event
+    _eventTracker.trackEvent('user.profile_set', attributes: {
+      'user.has_name': (name != null).toString(),
+      'user.has_email': (email != null).toString(),
+      'user.has_phone': (phone != null).toString(),
       'user.custom_attributes_count':
           (customAttributes?.length ?? 0).toString(),
+      'profile_timestamp': DateTime.now().toIso8601String(),
     });
   }
 
-  /// FIXED: Clear user context
-  void clearUser() {
-    _ensureInitialized();
-
-    // Only use spanManager in OpenTelemetry mode
+  /// Apply user profile to span manager
+  void _applyUserProfile() {
     if (!_config!.useJsonFormat && _spanManager != null) {
-      _spanManager!.clearUser();
+      _spanManager!.setUser(
+        userId: _currentUserId!,
+        email: _userProfile['user.email'],
+        name: _userProfile['user.name'],
+        customAttributes: {
+          if (_userProfile['user.phone'] != null)
+            'user.phone': _userProfile['user.phone']!,
+          ..._userProfile.entries
+              .where((e) =>
+                  !['user.email', 'user.name', 'user.phone'].contains(e.key))
+              .fold<Map<String, String>>({}, (map, entry) {
+            map[entry.key] = entry.value;
+            return map;
+          }),
+        },
+      );
     }
-
-    _eventTracker.trackEvent('user.context_cleared');
   }
 
-  /// FIXED: Execute a function within a span with automatic lifecycle management
+  /// Clear user profile (but keep auto-generated user ID)
+  void clearUserProfile() {
+    _ensureInitialized();
+
+    _userProfile.clear();
+
+    // Reset span manager to just have user ID
+    if (!_config!.useJsonFormat && _spanManager != null) {
+      _spanManager!.setUser(userId: _currentUserId!);
+    }
+
+    _eventTracker.trackEvent('user.profile_cleared');
+  }
+
+  /// Get current user ID (read-only)
+  String? get currentUserId => _currentUserId;
+
+  /// Get current user profile (read-only)
+  Map<String, String> get currentUserProfile => Map.unmodifiable(_userProfile);
+
+  // ==================== EXISTING API (Updated) ====================
+
+  /// REMOVED: setUser() method - replaced with setUserProfile()
+  /// REMOVED: clearUser() method - replaced with clearUserProfile()
+
+  /// Execute a function within a span with automatic lifecycle management
   Future<T> withSpan<T>(
     String spanName,
     Future<T> Function() operation, {
@@ -398,16 +466,17 @@ class EdgeTelemetry {
         attributes: networkAttributes);
   }
 
-  /// Track a custom event (ENHANCED - now also stores locally if reporting enabled)
+  /// Track a custom event (ENHANCED - now auto-includes user ID)
   void trackEvent(String eventName, {Map<String, String>? attributes}) {
     _ensureInitialized();
 
     final enrichedAttributes = {
       'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
+      // User ID automatically included in global attributes
       ...?attributes,
     };
 
-    // NEW: Store locally for reports if enabled
+    // Store locally for reports if enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
       final event = TelemetryEvent(
         id: _generateEventId(),
@@ -415,7 +484,7 @@ class EdgeTelemetry {
         eventName: eventName,
         timestamp: DateTime.now(),
         attributes: enrichedAttributes,
-        userId: _spanManager?.userId, // FIXED: Made nullable
+        userId: _currentUserId, // NEW: Auto-generated user ID
       );
 
       _reportStorage!.storeEvent(event).catchError((e) {
@@ -425,21 +494,22 @@ class EdgeTelemetry {
       });
     }
 
-    // Continue with normal tracking (unchanged)
+    // Continue with normal tracking
     _eventTracker.trackEvent(eventName, attributes: enrichedAttributes);
   }
 
-  /// Track a custom metric (ENHANCED - now also stores locally if reporting enabled)
+  /// Track a custom metric (ENHANCED - now auto-includes user ID)
   void trackMetric(String metricName, double value,
       {Map<String, String>? attributes}) {
     _ensureInitialized();
 
     final enrichedAttributes = {
       'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
+      // User ID automatically included in global attributes
       ...?attributes,
     };
 
-    // NEW: Store locally for reports if enabled
+    // Store locally for reports if enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
       final metric = TelemetryMetric(
         id: _generateMetricId(),
@@ -448,7 +518,7 @@ class EdgeTelemetry {
         value: value,
         timestamp: DateTime.now(),
         attributes: enrichedAttributes,
-        userId: _spanManager?.userId, // FIXED: Made nullable
+        userId: _currentUserId, // NEW: Auto-generated user ID
       );
 
       _reportStorage!.storeMetric(metric).catchError((e) {
@@ -458,7 +528,7 @@ class EdgeTelemetry {
       });
     }
 
-    // Continue with normal tracking (unchanged)
+    // Continue with normal tracking
     _eventTracker.trackMetric(metricName, value,
         attributes: enrichedAttributes);
   }
@@ -470,6 +540,7 @@ class EdgeTelemetry {
 
     final enrichedAttributes = {
       'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
+      // User ID automatically included in global attributes
       ...?attributes,
     };
 
@@ -477,7 +548,7 @@ class EdgeTelemetry {
         stackTrace: stackTrace, attributes: enrichedAttributes);
   }
 
-  /// FIXED: Create a span manually (for advanced use cases)
+  /// Create a span manually (for advanced use cases)
   Span? startSpan(String name, {Map<String, String>? attributes}) {
     _ensureInitialized();
 
@@ -488,7 +559,7 @@ class EdgeTelemetry {
     return null;
   }
 
-  /// FIXED: End a span manually (for advanced use cases)
+  /// End a span manually (for advanced use cases)
   void endSpan(Span? span) {
     if (span == null) return;
     _ensureInitialized();
@@ -525,11 +596,11 @@ class EdgeTelemetry {
   /// Get current configuration
   TelemetryConfig? get config => _config;
 
-  /// Get global attributes
+  /// Get global attributes (now includes auto-generated user ID)
   Map<String, String> get globalAttributes =>
       Map.unmodifiable(_globalAttributes);
 
-  // ==================== NEW: REPORT API METHODS ====================
+  // ==================== REPORT API METHODS ====================
 
   /// Generate a summary report of recent activity
   Future<GeneratedReport> generateSummaryReport({
@@ -621,7 +692,7 @@ class EdgeTelemetry {
 
   /// Dispose all resources (call when app is shutting down)
   void dispose() {
-    // NEW: End current session if reporting is enabled
+    // End current session if reporting is enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
       _currentSession = _currentSession?.copyWith(endTime: DateTime.now());
       _reportStorage?.endSession(_currentSessionId!).catchError((e) {
@@ -631,10 +702,10 @@ class EdgeTelemetry {
       });
     }
 
-    // NEW: Dispose reporting components
+    // Dispose reporting components
     _reportStorage?.dispose();
 
-    // Existing cleanup (unchanged)
+    // Existing cleanup
     _networkSubscription?.cancel();
     _networkMonitor?.dispose();
     _performanceMonitor?.dispose();
