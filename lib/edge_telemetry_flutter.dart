@@ -83,6 +83,7 @@ class EdgeTelemetry {
     String? reportStoragePath,
     Duration? dataRetentionPeriod,
     bool useJsonFormat = false,
+    int eventBatchSize = 30,
   }) async {
     final config = TelemetryConfig(
       endpoint: endpoint,
@@ -98,6 +99,7 @@ class EdgeTelemetry {
       reportStoragePath: reportStoragePath,
       dataRetentionPeriod: dataRetentionPeriod ?? const Duration(days: 30),
       useJsonFormat: useJsonFormat,
+      eventBatchSize: eventBatchSize,
     );
 
     await instance._setup(config);
@@ -235,11 +237,16 @@ class EdgeTelemetry {
   /// Setup JSON telemetry instead of OpenTelemetry
   Future<void> _setupJsonTelemetry() async {
     final jsonClient = JsonHttpClient(endpoint: _config!.endpoint);
-    _eventTracker =
-        JsonEventTracker(jsonClient, () => _getEnrichedAttributes());
+    _eventTracker = JsonEventTracker(
+      jsonClient,
+      () => _getEnrichedAttributes(),
+      batchSize: _config!.eventBatchSize, // NEW
+      debugMode: _config!.debugMode, // NEW
+    );
 
     if (_config!.debugMode) {
       print('📡 JSON telemetry configured for endpoint: ${_config!.endpoint}');
+      print('📦 Batch size: ${_config!.eventBatchSize} events');
     }
   }
 

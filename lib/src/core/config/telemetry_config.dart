@@ -1,5 +1,3 @@
-// lib/src/core/config/telemetry_config.dart
-
 /// Configuration class for EdgeTelemetry initialization
 ///
 /// Contains all settings needed to set up telemetry collection AND reporting
@@ -46,6 +44,8 @@ class TelemetryConfig {
 
   final bool useJsonFormat;
 
+  final int eventBatchSize;
+
   const TelemetryConfig({
     required this.serviceName,
     required this.endpoint,
@@ -61,6 +61,7 @@ class TelemetryConfig {
     this.reportStoragePath,
     this.dataRetentionPeriod = const Duration(days: 30),
     this.useJsonFormat = true,
+    this.eventBatchSize = 30,
   });
 
   /// Create a copy of this config with some values overridden
@@ -75,31 +76,30 @@ class TelemetryConfig {
     bool? enablePerformanceMonitoring,
     bool? enableErrorReporting,
     bool? enableNavigationTracking,
-    // NEW: Add report parameters to copyWith
     bool? enableLocalReporting,
     String? reportStoragePath,
     Duration? dataRetentionPeriod,
     bool? useJsonFormat,
+    int? eventBatchSize,
   }) {
     return TelemetryConfig(
-      serviceName: serviceName ?? this.serviceName,
-      endpoint: endpoint ?? this.endpoint,
-      debugMode: debugMode ?? this.debugMode,
-      globalAttributes: globalAttributes ?? this.globalAttributes,
-      batchTimeout: batchTimeout ?? this.batchTimeout,
-      maxBatchSize: maxBatchSize ?? this.maxBatchSize,
-      enableNetworkMonitoring:
-          enableNetworkMonitoring ?? this.enableNetworkMonitoring,
-      enablePerformanceMonitoring:
-          enablePerformanceMonitoring ?? this.enablePerformanceMonitoring,
-      enableErrorReporting: enableErrorReporting ?? this.enableErrorReporting,
-      enableNavigationTracking:
-          enableNavigationTracking ?? this.enableNavigationTracking,
-      // NEW: Add report fields to copyWith
-      enableLocalReporting: enableLocalReporting ?? this.enableLocalReporting,
-      reportStoragePath: reportStoragePath ?? this.reportStoragePath,
-      dataRetentionPeriod: dataRetentionPeriod ?? this.dataRetentionPeriod,
-      useJsonFormat: useJsonFormat ?? this.useJsonFormat,
-    );
+        serviceName: serviceName ?? this.serviceName,
+        endpoint: endpoint ?? this.endpoint,
+        debugMode: debugMode ?? this.debugMode,
+        globalAttributes: globalAttributes ?? this.globalAttributes,
+        batchTimeout: batchTimeout ?? this.batchTimeout,
+        maxBatchSize: maxBatchSize ?? this.maxBatchSize,
+        enableNetworkMonitoring:
+            enableNetworkMonitoring ?? this.enableNetworkMonitoring,
+        enablePerformanceMonitoring:
+            enablePerformanceMonitoring ?? this.enablePerformanceMonitoring,
+        enableErrorReporting: enableErrorReporting ?? this.enableErrorReporting,
+        enableNavigationTracking:
+            enableNavigationTracking ?? this.enableNavigationTracking,
+        enableLocalReporting: enableLocalReporting ?? this.enableLocalReporting,
+        reportStoragePath: reportStoragePath ?? this.reportStoragePath,
+        dataRetentionPeriod: dataRetentionPeriod ?? this.dataRetentionPeriod,
+        useJsonFormat: useJsonFormat ?? this.useJsonFormat,
+        eventBatchSize: eventBatchSize ?? this.eventBatchSize);
   }
 }
