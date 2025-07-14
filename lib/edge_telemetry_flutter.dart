@@ -26,6 +26,7 @@ import 'package:edge_telemetry_flutter/src/reports/simple_report_generator.dart'
 import 'package:edge_telemetry_flutter/src/storage/memory_report_storage.dart';
 import 'package:edge_telemetry_flutter/src/widgets/edge_navigation_observer.dart'
     as nav_widget;
+import 'package:flutter/cupertino.dart';
 import 'package:opentelemetry/api.dart';
 import 'package:opentelemetry/sdk.dart' as otel_sdk;
 
@@ -72,6 +73,7 @@ class EdgeTelemetry {
   static Future<void> initialize({
     required String endpoint,
     required String serviceName,
+    required VoidCallback runAppCallback,
     bool debugMode = false,
     Map<String, String>? globalAttributes,
     Duration? batchTimeout,
@@ -103,6 +105,21 @@ class EdgeTelemetry {
     );
 
     await instance._setup(config);
+    _installGlobalCrashHandler(runAppCallback);
+  }
+
+  /// Setup for Error Handling
+  static void _installGlobalCrashHandler(VoidCallback runAppCallback) {
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      instance.trackError(details.exception, stackTrace: details.stack);
+    };
+
+    runZonedGuarded(() {
+      runAppCallback();
+    }, (Object error, StackTrace stackTrace) {
+      instance.trackError(error, stackTrace: stackTrace);
+    });
   }
 
   /// Internal setup method
@@ -125,7 +142,7 @@ class EdgeTelemetry {
       if (config.useJsonFormat) {
         await _setupJsonTelemetry();
       } else {
-        await _setupOpenTelemetry();
+        await _setupTelemetry();
       }
 
       // Initialize core managers
@@ -217,7 +234,7 @@ class EdgeTelemetry {
   }
 
   /// Setup OpenTelemetry SDK
-  Future<void> _setupOpenTelemetry() async {
+  Future<void> _setupTelemetry() async {
     final processors = [
       otel_sdk.BatchSpanProcessor(
         otel_sdk.CollectorExporter(Uri.parse(_config!.endpoint)),
@@ -240,8 +257,8 @@ class EdgeTelemetry {
     _eventTracker = JsonEventTracker(
       jsonClient,
       () => _getEnrichedAttributes(),
-      batchSize: _config!.eventBatchSize, // NEW
-      debugMode: _config!.debugMode, // NEW
+      batchSize: _config!.eventBatchSize,
+      debugMode: _config!.debugMode,
     );
 
     if (_config!.debugMode) {
