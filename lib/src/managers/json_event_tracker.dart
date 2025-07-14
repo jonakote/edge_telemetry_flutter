@@ -1,6 +1,7 @@
 // lib/src/managers/json_event_tracker.dart
 
 import 'dart:async';
+
 import '../core/interfaces/event_tracker.dart';
 import '../http/json_http_client.dart';
 
@@ -15,13 +16,12 @@ class JsonEventTracker implements EventTracker {
   Timer? _timeoutTimer;
 
   JsonEventTracker(
-      this._httpClient,
-      this._getAttributes,
-      {
-        int batchSize = 30,
-        bool debugMode = false,
-      }
-      ) : _batchSize = batchSize, _debugMode = debugMode;
+    this._httpClient,
+    this._getAttributes, {
+    int batchSize = 30,
+    bool debugMode = false,
+  })  : _batchSize = batchSize,
+        _debugMode = debugMode;
 
   @override
   void trackEvent(String eventName, {Map<String, String>? attributes}) {
@@ -66,9 +66,9 @@ class JsonEventTracker implements EventTracker {
         ..._getAttributes(),
         ...?attributes,
       },
+      if (stackTrace != null) 'stackTrace': stackTrace.toString(),
     };
 
-    // Send errors immediately (bypass batching)
     _httpClient.sendTelemetryData(errorData);
 
     if (_debugMode) {
@@ -81,7 +81,8 @@ class JsonEventTracker implements EventTracker {
     _eventQueue.add(eventData);
 
     if (_debugMode) {
-      print('📦 Queued event (${_eventQueue.length}/$_batchSize): ${eventData['eventName'] ?? eventData['metricName'] ?? 'unknown'}');
+      print(
+          '📦 Queued event (${_eventQueue.length}/$_batchSize): ${eventData['eventName'] ?? eventData['metricName'] ?? 'unknown'}');
     }
 
     // Send batch when we reach the limit
@@ -120,7 +121,8 @@ class JsonEventTracker implements EventTracker {
     _timeoutTimer = Timer(Duration(minutes: 5), () {
       if (_eventQueue.isNotEmpty) {
         if (_debugMode) {
-          print('⏰ Timeout: Sending partial batch of ${_eventQueue.length} events');
+          print(
+              '⏰ Timeout: Sending partial batch of ${_eventQueue.length} events');
         }
         _sendBatch();
       }
