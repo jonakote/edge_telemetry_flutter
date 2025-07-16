@@ -596,14 +596,24 @@ class EdgeTelemetry {
         attributes: networkAttributes);
   }
 
-  /// Track a custom event (ENHANCED - now includes session details)
-  void trackEvent(String eventName, {Map<String, String>? attributes}) {
+  /// Track a custom event with flexible attribute support
+  ///
+  /// [eventName] - Name of the event
+  /// [attributes] - Can be:
+  ///   - Map<String, String> (traditional)
+  ///   - Map<String, dynamic> (flexible - auto-converted)
+  ///   - Any object with toJson() method
+  ///   - Any object (converted via toString/reflection)
+  void trackEvent(String eventName, {dynamic attributes}) {
     _ensureInitialized();
 
     // Record event in session manager
     _sessionManager.recordEvent();
 
-    final enrichedAttributes = _getEnrichedAttributes(attributes);
+    // Convert attributes to Map<String, String>
+    final Map<String, String> stringAttributes =
+        _convertToStringMap(attributes);
+    final enrichedAttributes = _getEnrichedAttributes(stringAttributes);
 
     // Store locally for reports if enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
@@ -627,15 +637,25 @@ class EdgeTelemetry {
     _eventTracker.trackEvent(eventName, attributes: enrichedAttributes);
   }
 
-  /// Track a custom metric (ENHANCED - now includes session details)
-  void trackMetric(String metricName, double value,
-      {Map<String, String>? attributes}) {
+  /// Track a custom metric with flexible attribute support
+  ///
+  /// [metricName] - Name of the metric
+  /// [value] - Numeric value
+  /// [attributes] - Can be:
+  ///   - Map<String, String> (traditional)
+  ///   - Map<String, dynamic> (flexible - auto-converted)
+  ///   - Any object with toJson() method
+  ///   - Any object (converted via toString/reflection)
+  void trackMetric(String metricName, double value, {dynamic attributes}) {
     _ensureInitialized();
 
     // Record metric in session manager
     _sessionManager.recordMetric();
 
-    final enrichedAttributes = _getEnrichedAttributes(attributes);
+    // Convert attributes to Map<String, String>
+    final Map<String, String> stringAttributes =
+        _convertToStringMap(attributes);
+    final enrichedAttributes = _getEnrichedAttributes(stringAttributes);
 
     // Store locally for reports if enabled
     if (isLocalReportingEnabled && _currentSessionId != null) {
@@ -659,6 +679,104 @@ class EdgeTelemetry {
     // Continue with normal tracking
     _eventTracker.trackMetric(metricName, value,
         attributes: enrichedAttributes);
+  }
+
+  /// Convert various attribute types to Map<String, String>
+  Map<String, String> _convertToStringMap(dynamic attributes) {
+    if (attributes == null) {
+      return {};
+    }
+
+    // Already a Map<String, String>
+    if (attributes is Map<String, String>) {
+      return attributes;
+    }
+
+    // Map<String, dynamic> - convert values to strings
+    if (attributes is Map<String, dynamic>) {
+      return attributes
+          .map((key, value) => MapEntry(key, _valueToString(value)));
+    }
+
+    // Map with other key types - convert both keys and values
+    if (attributes is Map) {
+      return attributes
+          .map((key, value) => MapEntry(key.toString(), _valueToString(value)));
+    }
+
+    // Object with toJson() method
+    if (attributes is Object && _hasToJsonMethod(attributes)) {
+      try {
+        final jsonMap = (attributes as dynamic).toJson();
+        if (jsonMap is Map) {
+          return jsonMap.map(
+              (key, value) => MapEntry(key.toString(), _valueToString(value)));
+        }
+      } catch (e) {
+        if (_config?.debugMode == true) {
+          print('⚠️ Failed to convert object.toJson(): $e');
+        }
+      }
+    }
+
+    // Object with properties - use reflection-like approach
+    if (attributes is Object) {
+      return _objectToMap(attributes);
+    }
+
+    // Fallback - convert entire object to single attribute
+    return {'value': _valueToString(attributes)};
+  }
+
+  /// Convert a value to string representation
+  String _valueToString(dynamic value) {
+    if (value == null) return 'null';
+    if (value is String) return value;
+    if (value is num) return value.toString();
+    if (value is bool) return value.toString();
+    if (value is DateTime) return value.toIso8601String();
+    if (value is Duration) return value.inMilliseconds.toString();
+    if (value is List) return value.join(',');
+    if (value is Map) return value.toString();
+    return value.toString();
+  }
+
+  /// Check if object has toJson method
+  bool _hasToJsonMethod(Object obj) {
+    try {
+      return obj.runtimeType.toString().contains('toJson') ||
+          (obj as dynamic).toJson != null;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /// Convert object to map using basic reflection
+  Map<String, String> _objectToMap(Object obj) {
+    final Map<String, String> result = {};
+
+    try {
+      // Get the object's string representation and try to extract meaningful data
+      final objString = obj.toString();
+
+      // If it's a custom object with meaningful toString(), use it
+      if (!objString.startsWith('Instance of ')) {
+        result['object'] = objString;
+      } else {
+        // Fallback to type name
+        result['type'] = obj.runtimeType.toString();
+        result['value'] = objString;
+      }
+
+      // Try to get some basic properties if it's a common type
+      if (obj is Enum) {
+        result['enum_name'] = obj.toString().split('.').last;
+      }
+    } catch (e) {
+      result['error'] = 'Failed to convert object: $e';
+    }
+
+    return result;
   }
 
   /// Track an error or exception
