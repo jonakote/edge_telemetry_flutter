@@ -1,3 +1,5 @@
+// lib/edge_telemetry_flutter.dart - Enhanced version with automatic HTTP monitoring
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
@@ -14,6 +16,7 @@ import 'package:edge_telemetry_flutter/src/core/models/generated_report.dart';
 import 'package:edge_telemetry_flutter/src/core/models/report_data.dart';
 import 'package:edge_telemetry_flutter/src/core/models/telemetry_session.dart';
 import 'package:edge_telemetry_flutter/src/http/json_http_client.dart';
+import 'package:edge_telemetry_flutter/src/http/telemetry_http_overrides.dart'; // NEW
 import 'package:edge_telemetry_flutter/src/managers/event_tracker_impl.dart';
 import 'package:edge_telemetry_flutter/src/managers/json_event_tracker.dart';
 import 'package:edge_telemetry_flutter/src/managers/session_manager.dart';
@@ -30,7 +33,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:opentelemetry/api.dart';
 import 'package:opentelemetry/sdk.dart' as otel_sdk;
 
-/// Main EdgeTelemetry class with enhanced session tracking
+/// Main EdgeTelemetry class with automatic HTTP monitoring and enhanced session tracking
 class EdgeTelemetry {
   static EdgeTelemetry? _instance;
   static EdgeTelemetry get instance => _instance ??= EdgeTelemetry._();
@@ -44,7 +47,7 @@ class EdgeTelemetry {
 
   // User and session management
   late UserIdManager _userIdManager;
-  late SessionManager _sessionManager; // NEW
+  late SessionManager _sessionManager;
   String? _currentUserId;
 
   // User profile data (separate from ID)
@@ -61,6 +64,9 @@ class EdgeTelemetry {
   TelemetrySession? _currentSession;
   String? _currentSessionId;
 
+  // NEW: HTTP monitoring state
+  bool _httpMonitoringInstalled = false;
+
   // State
   bool _initialized = false;
   TelemetryConfig? _config;
@@ -69,7 +75,13 @@ class EdgeTelemetry {
   // Subscriptions
   StreamSubscription<String>? _networkSubscription;
 
-  /// Initialize EdgeTelemetry with the given configuration
+  /// Initialize EdgeTelemetry with automatic monitoring capabilities
+  ///
+  /// This is the ONE-CALL setup that enables all automatic telemetry:
+  /// - Crash reporting via global error handlers
+  /// - HTTP request monitoring via HttpOverrides.global
+  /// - Session tracking and user identification
+  /// - Performance and network monitoring
   static Future<void> initialize({
     required String endpoint,
     required String serviceName,
@@ -81,10 +93,11 @@ class EdgeTelemetry {
     bool enableNetworkMonitoring = true,
     bool enablePerformanceMonitoring = true,
     bool enableNavigationTracking = true,
+    bool enableHttpMonitoring = true, // NEW: Enable automatic HTTP monitoring
     bool enableLocalReporting = false,
     String? reportStoragePath,
     Duration? dataRetentionPeriod,
-    bool useJsonFormat = false,
+    bool useJsonFormat = true, // Default to JSON for simplicity
     int eventBatchSize = 30,
   }) async {
     final config = TelemetryConfig(
@@ -97,24 +110,29 @@ class EdgeTelemetry {
       enableNetworkMonitoring: enableNetworkMonitoring,
       enablePerformanceMonitoring: enablePerformanceMonitoring,
       enableNavigationTracking: enableNavigationTracking,
+      enableErrorReporting: true, // Always enable error reporting
       enableLocalReporting: enableLocalReporting,
       reportStoragePath: reportStoragePath,
       dataRetentionPeriod: dataRetentionPeriod ?? const Duration(days: 30),
       useJsonFormat: useJsonFormat,
       eventBatchSize: eventBatchSize,
+      // Add HTTP monitoring config
+      enableHttpMonitoring: enableHttpMonitoring,
     );
 
     await instance._setup(config);
     _installGlobalCrashHandler(runAppCallback);
   }
 
-  /// Setup for Error Handling
+  /// Setup global crash and error handling
   static void _installGlobalCrashHandler(VoidCallback runAppCallback) {
+    // Capture Flutter framework errors
     FlutterError.onError = (FlutterErrorDetails details) {
       FlutterError.presentError(details);
       instance.trackError(details.exception, stackTrace: details.stack);
     };
 
+    // Capture all other errors with runZonedGuarded
     runZonedGuarded(() {
       runAppCallback();
     }, (Object error, StackTrace stackTrace) {
@@ -122,7 +140,7 @@ class EdgeTelemetry {
     });
   }
 
-  /// Internal setup method
+  /// Internal setup method - enhanced with HTTP monitoring
   Future<void> _setup(TelemetryConfig config) async {
     if (_initialized) return;
 
@@ -132,7 +150,7 @@ class EdgeTelemetry {
       // Initialize user ID manager and get/generate user ID
       await _initializeUserId();
 
-      // NEW: Initialize session manager
+      // Initialize session manager
       await _initializeSession();
 
       // Collect device information
@@ -151,6 +169,11 @@ class EdgeTelemetry {
       // Setup monitoring components
       await _setupMonitoring();
 
+      // Setup automatic HTTP monitoring
+      if (config.enableHttpMonitoring) {
+        _setupHttpMonitoring();
+      }
+
       // Setup navigation tracking
       _setupNavigationTracking();
 
@@ -168,6 +191,7 @@ class EdgeTelemetry {
         'network_monitoring': config.enableNetworkMonitoring.toString(),
         'performance_monitoring': config.enablePerformanceMonitoring.toString(),
         'navigation_tracking': config.enableNavigationTracking.toString(),
+        'http_monitoring': config.enableHttpMonitoring.toString(),
         'local_reporting': config.enableLocalReporting.toString(),
         'json_format': config.useJsonFormat.toString(),
         'user_id_auto_generated': 'true',
@@ -182,6 +206,8 @@ class EdgeTelemetry {
         print('👤 User ID: $_currentUserId');
         print('🔄 Session ID: ${_sessionManager.currentSessionId}');
         print('📊 Session Stats: ${_sessionManager.getSessionStats()}');
+        print(
+            '🌐 HTTP Monitoring: ${config.enableHttpMonitoring ? 'Enabled' : 'Disabled'}');
         print(
             '📊 Device: ${_globalAttributes['device.model'] ?? 'Unknown'} (${_globalAttributes['device.platform'] ?? 'Unknown'})');
         print(
@@ -199,13 +225,67 @@ class EdgeTelemetry {
     }
   }
 
+  /// NEW: Setup automatic HTTP monitoring
+  void _setupHttpMonitoring() {
+    if (_httpMonitoringInstalled) return;
+
+    TelemetryHttpOverrides.installGlobal(
+      onRequestComplete: (HttpRequestTelemetry httpTelemetry) {
+        _trackHttpRequest(httpTelemetry);
+      },
+      debugMode: _config?.debugMode ?? false,
+    );
+
+    _httpMonitoringInstalled = true;
+
+    if (_config?.debugMode == true) {
+      print('🌐 HTTP monitoring installed globally');
+      print('📡 All HTTP requests will be automatically tracked');
+    }
+  }
+
+  /// Track HTTP request telemetry
+  void _trackHttpRequest(HttpRequestTelemetry httpTelemetry) {
+    // Track as an event
+    trackEvent('http.request', attributes: httpTelemetry.toAttributes());
+
+    // Track response time as a metric
+    trackMetric(
+      'http.response_time',
+      httpTelemetry.duration.inMilliseconds.toDouble(),
+      attributes: {
+        'http.method': httpTelemetry.method,
+        'http.status_code': httpTelemetry.statusCode.toString(),
+        'http.category': httpTelemetry.category,
+        'http.performance': httpTelemetry.performanceCategory,
+      },
+    );
+
+    // Track errors separately
+    if (!httpTelemetry.isSuccess) {
+      trackEvent('http.error', attributes: {
+        ...httpTelemetry.toAttributes(),
+        'error.type': 'http_error',
+        'error.category': httpTelemetry.category,
+      });
+    }
+
+    // Track slow requests
+    if (httpTelemetry.duration.inMilliseconds > 2000) {
+      trackEvent('http.slow_request', attributes: {
+        ...httpTelemetry.toAttributes(),
+        'performance.category': 'slow',
+      });
+    }
+  }
+
   /// Initialize user ID (auto-generated and persistent)
   Future<void> _initializeUserId() async {
     _userIdManager = UserIdManager();
     _currentUserId = await _userIdManager.getUserId();
   }
 
-  /// NEW: Initialize session manager and start session
+  /// Initialize session manager and start session
   Future<void> _initializeSession() async {
     _sessionManager = SessionManager();
     _currentSessionId = _generateSessionId();
@@ -227,7 +307,7 @@ class EdgeTelemetry {
       [Map<String, String>? customAttributes]) {
     return {
       ..._globalAttributes,
-      ..._sessionManager.getSessionAttributes(), // NEW: Session details
+      ..._sessionManager.getSessionAttributes(),
       'network.type': _networkMonitor?.currentNetworkType ?? 'unknown',
       ...?customAttributes,
     };
@@ -313,7 +393,7 @@ class EdgeTelemetry {
     if (_config!.enableNavigationTracking) {
       _navigationObserver = nav_widget.EdgeNavigationObserver(
         onEvent: (eventName, {attributes}) {
-          // NEW: Track screen visits for session
+          // Track screen visits for session
           if (eventName == 'navigation.route_change' &&
               attributes != null &&
               attributes.containsKey('navigation.to')) {
@@ -469,7 +549,7 @@ class EdgeTelemetry {
   /// Get current user profile (read-only)
   Map<String, String> get currentUserProfile => Map.unmodifiable(_userProfile);
 
-  /// NEW: Get current session information
+  /// Get current session information
   Map<String, dynamic> get currentSessionInfo =>
       _sessionManager.getSessionStats();
 
@@ -494,6 +574,7 @@ class EdgeTelemetry {
   }
 
   /// Execute a network operation with automatic network context
+  /// NOTE: This is now mostly for manual tracking, as HTTP monitoring is automatic
   Future<T> withNetworkSpan<T>(
     String operationName,
     String url,
@@ -507,6 +588,7 @@ class EdgeTelemetry {
       'http.url': url,
       'http.method': method,
       'network.operation': operationName,
+      'network.tracking_type': 'manual', // Distinguish from automatic tracking
       ...?attributes,
     };
 
@@ -518,7 +600,7 @@ class EdgeTelemetry {
   void trackEvent(String eventName, {Map<String, String>? attributes}) {
     _ensureInitialized();
 
-    // NEW: Record event in session manager
+    // Record event in session manager
     _sessionManager.recordEvent();
 
     final enrichedAttributes = _getEnrichedAttributes(attributes);
@@ -550,7 +632,7 @@ class EdgeTelemetry {
       {Map<String, String>? attributes}) {
     _ensureInitialized();
 
-    // NEW: Record metric in session manager
+    // Record metric in session manager
     _sessionManager.recordMetric();
 
     final enrichedAttributes = _getEnrichedAttributes(attributes);
@@ -735,7 +817,7 @@ class EdgeTelemetry {
 
   /// Dispose all resources (call when app is shutting down)
   void dispose() {
-    // NEW: End session before disposing
+    // End session before disposing
     _sessionManager.endSession();
 
     // End current session if reporting is enabled
@@ -746,6 +828,12 @@ class EdgeTelemetry {
           print('⚠️ Failed to end session: $e');
         }
       });
+    }
+
+    // Remove HTTP monitoring
+    if (_httpMonitoringInstalled) {
+      TelemetryHttpOverrides.uninstallGlobal();
+      _httpMonitoringInstalled = false;
     }
 
     // Dispose reporting components
@@ -760,6 +848,7 @@ class EdgeTelemetry {
 
     if (_config?.debugMode == true) {
       print('🧹 EdgeTelemetry disposed');
+      print('🌐 HTTP monitoring removed');
     }
   }
 }
