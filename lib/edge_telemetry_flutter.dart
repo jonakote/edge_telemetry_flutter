@@ -473,6 +473,7 @@ class EdgeTelemetry {
     return _generateRandomString(16);
   }
 
+  /// Generate a random alphanumeric string
   String _generateRandomString(int length) {
     const chars =
         'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
