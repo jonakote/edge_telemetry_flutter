@@ -470,7 +470,16 @@ class EdgeTelemetry {
   }
 
   String _generateSessionId() {
-    return 'session_${DateTime.now().millisecondsSinceEpoch}_${_globalAttributes['device.platform'] ?? 'unknown'}';
+    return _generateRandomString(16);
+  }
+
+  String _generateRandomString(int length) {
+    const chars =
+        'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final random = Random.secure();
+
+    return String.fromCharCodes(Iterable.generate(
+        length, (_) => chars.codeUnitAt(random.nextInt(chars.length))));
   }
 
   // ==================== USER PROFILE API ====================
