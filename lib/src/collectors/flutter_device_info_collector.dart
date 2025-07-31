@@ -7,14 +7,27 @@ import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../core/interfaces/device_info_collector.dart';
+import '../managers/device_id_manager.dart';
 
 /// Flutter implementation of device information collector
 ///
 /// Collects device, platform, and app information using Flutter plugins
 class FlutterDeviceInfoCollector implements DeviceInfoCollector {
+  final DeviceIdManager _deviceIdManager = DeviceIdManager();
+
   @override
   Future<Map<String, String>> collectDeviceInfo() async {
     final attributes = <String, String>{};
+
+    // Step 1: Get persistent device ID first
+    try {
+      final deviceId = await _deviceIdManager.getDeviceId();
+      attributes['device.id'] = deviceId;
+      print('✅ Device ID: $deviceId');
+    } catch (e) {
+      print('⚠️ Device ID generation failed: $e');
+      attributes['device.id_error'] = e.toString();
+    }
 
     try {
       // Collect app information
