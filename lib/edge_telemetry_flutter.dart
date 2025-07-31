@@ -203,6 +203,7 @@ class EdgeTelemetry {
         print('📱 Service: ${config.serviceName}');
         print('🔗 Endpoint: ${config.endpoint}');
         print('📡 Format: ${config.useJsonFormat ? 'JSON' : 'OpenTelemetry'}');
+        print('🆔 Device ID: ${_globalAttributes['device.id'] ?? 'Not available'}');
         print('👤 User ID: $_currentUserId');
         print('🔄 Session ID: ${_sessionManager.currentSessionId}');
         print('📊 Session Stats: ${_sessionManager.getSessionStats()}');
@@ -300,6 +301,23 @@ class EdgeTelemetry {
 
     // Add auto-generated user ID to global attributes
     _globalAttributes['user.id'] = _currentUserId!;
+    
+    // Verify device ID is present and log status
+    if (_globalAttributes.containsKey('device.id')) {
+      final deviceId = _globalAttributes['device.id']!;
+      if (_config!.debugMode) {
+        print('🆔 Device ID collected: $deviceId');
+        if (_isValidDeviceId(deviceId)) {
+          print('✅ Device ID format validated');
+        } else {
+          print('⚠️ Device ID format validation failed');
+        }
+      }
+    } else {
+      if (_config!.debugMode) {
+        print('⚠️ Device ID missing from device info collection');
+      }
+    }
   }
 
   /// Get enriched attributes with session details
@@ -940,6 +958,23 @@ class EdgeTelemetry {
       throw StateError(
         'Local reporting is not enabled. Set enableLocalReporting: true when initializing EdgeTelemetry.',
       );
+    }
+  }
+
+  /// Validate device ID format
+  /// 
+  /// Expected format: device_<timestamp>_<random>_<platform>
+  /// Example: device_1704067200000_a8b9c2d1_android
+  bool _isValidDeviceId(String deviceId) {
+    try {
+      // Expected format: device_<timestamp>_<random>_<platform>
+      final regex = RegExp(r'^device_\d{13}_[a-z0-9]{8}_(android|ios|web|windows|macos|linux|fuchsia|unknown)$');
+      return regex.hasMatch(deviceId);
+    } catch (e) {
+      if (_config?.debugMode == true) {
+        print('⚠️ Device ID validation error: $e');
+      }
+      return false;
     }
   }
 
