@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.3.10] - 2025-01-31
+
+### 🆔 Device Identification System
+
+#### New DeviceIdManager
+- **NEW**: Persistent device identification across app sessions
+- Device IDs follow format: `device_<timestamp>_<random>_<platform>`
+- Example: `device_1704067200000_a8b9c2d1_android`
+- Automatically generated on first app install
+- Persists across app restarts and sessions
+- Platform-aware: android, ios, web, windows, macos, linux, fuchsia
+
+#### Enhanced Device Info Collection
+- **NEW**: `device.id` attribute added to all telemetry events and metrics
+- Integrated with FlutterDeviceInfoCollector for seamless collection
+- Graceful error handling if device ID generation fails
+- Format validation ensures data integrity
+
+#### Debug Logging Enhancements
+- Device ID now appears in EdgeTelemetry initialization logs
+- Format validation logging for troubleshooting
+- Enhanced debug output: `🆔 Device ID: device_xxx_xxx_platform`
+
+### 🔧 Technical Implementation
+- Added `DeviceIdManager` class with persistent storage via SharedPreferences
+- Updated `FlutterDeviceInfoCollector` to include device ID in collection
+- Enhanced main `EdgeTelemetry` class with device ID validation and logging
+- In-memory caching for performance optimization
+- Comprehensive error handling with fallback strategies
+
+### 📊 Device Attributes (Auto-Added to All Events)
+```json
+{
+  "device.id": "device_1704067200000_a8b9c2d1_android",
+  "device.model": "Pixel 7",
+  "device.manufacturer": "Google",
+  "device.platform": "android",
+  "app.name": "My App",
+  "user.id": "user_1704067200123_abcd1234",
+  "session.id": "session_1704067200456_xyz789"
+}
+```
+
+### 🎯 Benefits
+- **Unique Device Tracking**: Persistent device identification across sessions
+- **Enhanced Analytics**: Better device-level insights and user journey tracking
+- **Data Quality**: Format validation ensures consistent device identification
+- **Performance Optimized**: Sub-millisecond response after first generation
+- **Privacy Conscious**: Device IDs are app-specific and locally generated
+
 ## [1.2.4] - 2024-12-19
 
 ### 🔥 Major Changes
