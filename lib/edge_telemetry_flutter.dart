@@ -87,6 +87,7 @@ class EdgeTelemetry {
     required String serviceName,
     required VoidCallback runAppCallback,
     bool debugMode = false,
+    Map<String, String>? headers,
     Map<String, String>? globalAttributes,
     Duration? batchTimeout,
     int? maxBatchSize,
@@ -102,6 +103,7 @@ class EdgeTelemetry {
   }) async {
     final config = TelemetryConfig(
       endpoint: endpoint,
+      headers: headers ?? {},
       serviceName: serviceName,
       debugMode: debugMode,
       globalAttributes: globalAttributes ?? {},
@@ -203,7 +205,8 @@ class EdgeTelemetry {
         print('📱 Service: ${config.serviceName}');
         print('🔗 Endpoint: ${config.endpoint}');
         print('📡 Format: ${config.useJsonFormat ? 'JSON' : 'OpenTelemetry'}');
-        print('🆔 Device ID: ${_globalAttributes['device.id'] ?? 'Not available'}');
+        print(
+            '🆔 Device ID: ${_globalAttributes['device.id'] ?? 'Not available'}');
         print('👤 User ID: $_currentUserId');
         print('🔄 Session ID: ${_sessionManager.currentSessionId}');
         print('📊 Session Stats: ${_sessionManager.getSessionStats()}');
@@ -301,7 +304,7 @@ class EdgeTelemetry {
 
     // Add auto-generated user ID to global attributes
     _globalAttributes['user.id'] = _currentUserId!;
-    
+
     // Verify device ID is present and log status
     if (_globalAttributes.containsKey('device.id')) {
       final deviceId = _globalAttributes['device.id']!;
@@ -335,7 +338,8 @@ class EdgeTelemetry {
   Future<void> _setupTelemetry() async {
     final processors = [
       otel_sdk.BatchSpanProcessor(
-        otel_sdk.CollectorExporter(Uri.parse(_config!.endpoint)),
+        otel_sdk.CollectorExporter(Uri.parse(_config!.endpoint),
+            headers: config!.headers,),
       ),
     ];
 
@@ -962,13 +966,14 @@ class EdgeTelemetry {
   }
 
   /// Validate device ID format
-  /// 
+  ///
   /// Expected format: device_<timestamp>_<random>_<platform>
   /// Example: device_1704067200000_a8b9c2d1_android
   bool _isValidDeviceId(String deviceId) {
     try {
       // Expected format: device_<timestamp>_<random>_<platform>
-      final regex = RegExp(r'^device_\d{13}_[a-z0-9]{8}_(android|ios|web|windows|macos|linux|fuchsia|unknown)$');
+      final regex = RegExp(
+          r'^device_\d{13}_[a-z0-9]{8}_(android|ios|web|windows|macos|linux|fuchsia|unknown)$');
       return regex.hasMatch(deviceId);
     } catch (e) {
       if (_config?.debugMode == true) {

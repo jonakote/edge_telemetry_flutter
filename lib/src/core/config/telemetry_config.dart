@@ -10,6 +10,9 @@ class TelemetryConfig {
   /// Backend endpoint URL for sending telemetry data
   final String endpoint;
 
+  /// Headers included in the request for sending telemetry data
+  final Map<String, String> headers;
+
   /// Enable debug logging and console output
   final bool debugMode;
 
@@ -57,6 +60,7 @@ class TelemetryConfig {
   const TelemetryConfig({
     required this.serviceName,
     required this.endpoint,
+    this.headers = const {},
     this.debugMode = false,
     this.globalAttributes = const {},
     this.batchTimeout = const Duration(seconds: 5),

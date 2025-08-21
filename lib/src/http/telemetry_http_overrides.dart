@@ -78,7 +78,7 @@ class TelemetryHttpClient implements HttpClient {
 
   @override
   Duration get idleTimeout =>
-      _baseClient.idleTimeout ?? const Duration(seconds: 15);
+      _baseClient.idleTimeout;
   @override
   set idleTimeout(Duration value) {
     _baseClient.idleTimeout = value;
