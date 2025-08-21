@@ -1,25 +1,22 @@
 // lib/src/http/json_http_client.dart
 
-import 'dart:convert';
-import 'dart:io';
+import 'package:http/http.dart' as http;
 
 class JsonHttpClient {
   final String endpoint;
-  final HttpClient _httpClient;
+  final http.Client _httpClient;
+  final Map<String, String>? headers;
 
-  JsonHttpClient({required this.endpoint}) : _httpClient = HttpClient();
+  JsonHttpClient({required this.endpoint, this.headers,}) : _httpClient = http.Client();
 
   Future<bool> sendTelemetryData(Map<String, dynamic> data) async {
     try {
       final uri = Uri.parse(endpoint);
-      final request = await _httpClient.postUrl(uri);
-
-      request.headers.set('Content-Type', 'application/json');
-
-      final jsonString = json.encode(data);
-      request.write(jsonString);
-
-      final response = await request.close();
+      final response = await _httpClient.post(
+        uri,
+        headers: {'Content-Type': 'application/json', ...?headers},
+        body: data,
+      );
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         print('✅ Sent telemetry data successfully');

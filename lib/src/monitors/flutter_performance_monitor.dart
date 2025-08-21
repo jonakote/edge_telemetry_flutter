@@ -3,11 +3,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../core/interfaces/event_tracker.dart';
 import '../core/interfaces/performance_monitor.dart';
+import 'package:flutter_device_info_plus/flutter_device_info_plus.dart';
 
 /// Flutter implementation of performance monitoring
 ///
@@ -120,9 +122,9 @@ class FlutterPerformanceMonitor implements PerformanceMonitor {
   }
 
   @override
-  void trackMemoryUsage() {
+  void trackMemoryUsage() async {
     try {
-      final memoryUsage = _getMemoryUsage();
+      final memoryUsage = await _getMemoryUsage();
       if (memoryUsage != null) {
         _eventTracker?.trackMetric(
             'performance.memory_usage', memoryUsage.toDouble(),
@@ -144,8 +146,8 @@ class FlutterPerformanceMonitor implements PerformanceMonitor {
   }
 
   @override
-  void trackSystemPerformance() {
-    final systemInfo = _getSystemPerformanceInfo();
+  void trackSystemPerformance() async {
+    final systemInfo = await _getSystemPerformanceInfo();
 
     _eventTracker?.trackEvent('performance.system_check', attributes: {
       'system.timestamp': DateTime.now().toIso8601String(),
@@ -190,11 +192,15 @@ class FlutterPerformanceMonitor implements PerformanceMonitor {
   }
 
   /// Get current memory usage in bytes
-  int? _getMemoryUsage() {
+  Future<int?> _getMemoryUsage() async {
     try {
+      if (kIsWeb) {
+        const deviceInfo = FlutterDeviceInfoPlus();
+        final info = await deviceInfo.getDeviceInfo();
+        return info.memoryInfo.totalPhysicalMemory;
+      }
       return ProcessInfo.currentRss;
     } catch (e) {
-      // Memory info not available on all platforms
       return null;
     }
   }
@@ -224,14 +230,14 @@ class FlutterPerformanceMonitor implements PerformanceMonitor {
   }
 
   /// Get system performance information
-  Map<String, String> _getSystemPerformanceInfo() {
+  Future<Map<String, String>> _getSystemPerformanceInfo() async {
     final info = <String, String>{
       'platform': Platform.operatingSystem,
       'platform_version': Platform.operatingSystemVersion,
     };
 
     // Add memory info if available
-    final memoryUsage = _getMemoryUsage();
+    final memoryUsage = await _getMemoryUsage();
     if (memoryUsage != null) {
       info['memory.current_rss'] = memoryUsage.toString();
       info['memory.current_mb'] =
