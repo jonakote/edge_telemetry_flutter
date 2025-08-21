@@ -40,7 +40,7 @@ class FlutterDeviceInfoCollector implements DeviceInfoCollector {
       });
 
       // Collect platform information
-      attributes['device.platform'] = Platform.operatingSystem;
+      attributes['device.platform'] = kIsWeb ? "web" : Platform.operatingSystem;
       attributes['device.platform_version'] = Platform.operatingSystemVersion;
 
       // Collect platform-specific device information
